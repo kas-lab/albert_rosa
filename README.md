@@ -1,3 +1,6 @@
+Readme below will be updated soon. This is not the current readme.
+
+
 # Graph-like navigation
 Repository with an example use case of a robot navigating in a graph-like environment.
 
