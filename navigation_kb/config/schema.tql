@@ -1,0 +1,90 @@
+define
+
+# === ATTRIBUTES ===
+waypoint-name sub attribute, value string;
+config-name sub attribute, value string;
+parameter-key sub attribute, value string;
+parameter-value sub attribute, value string;
+parameter-type sub attribute, value string;
+attribute-name sub attribute, value string;
+operator sub attribute, value string;
+value sub attribute, value double;
+priority sub attribute, value double;
+function-design-name sub attribute, value string;
+
+is-lit sub attribute, value boolean;
+is-dark sub attribute, value boolean;
+
+uses-lidar sub attribute, value boolean;
+uses-high-speed sub attribute, value boolean;
+uses-low-speed sub attribute, value boolean;
+
+action-name sub attribute, value string;
+function-name sub attribute, value string;
+component-name sub attribute, value string;
+
+# === ENTITIES ===
+waypoint sub entity,
+    owns waypoint-name;
+
+configuration sub entity,
+    owns config-name;
+
+component-parameter sub entity,
+    owns parameter-key,
+    owns parameter-value,
+    owns parameter-type;
+
+component sub entity,
+    owns component-name;
+
+function sub entity,
+    owns function-name;
+
+action sub entity,
+    owns action-name;
+
+quality-attribute sub entity,
+    owns attribute-name;
+
+measure sub entity,
+    owns value;
+
+# === RELATIONS ===
+corridor sub relation,
+    relates from,
+    relates to;
+
+lighting-condition sub relation,
+    relates from,
+    relates to,
+    owns is-lit,
+    owns is-dark;
+
+config-trait sub relation,
+    relates configuration,
+    owns uses-lidar,
+    owns uses-high-speed,
+    owns uses-low-speed;
+
+component-configuration sub relation,
+    relates component,
+    relates parameter,
+    owns config-name,
+    owns priority;
+
+function-design sub relation,
+    relates function,
+    relates required-component,
+    owns function-design-name;
+
+functional-requirement sub relation,
+    relates action,
+    relates required-function;
+
+constraint sub relation,
+    relates constraint,       # what attribute is constrained (e.g. battery)
+    relates constrained,      # config or component being constrained
+    relates measured,         # measure of the attribute (e.g. battery level 50)
+    owns operator,
+    owns value;

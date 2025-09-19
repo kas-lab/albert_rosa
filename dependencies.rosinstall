@@ -1,0 +1,21 @@
+repositories:
+  ros2_planning_system:
+    type: git
+    url: https://github.com/PlanSys2/ros2_planning_system.git
+    version: e2fd96e
+  rosa:
+    type: git
+    url: https://github.com/kas-lab/rosa.git
+    version: main
+  ros_type:
+    type: git
+    url: https://github.com/kas-lab/ros_typedb.git
+    version: main
+  mirte-ros-packages:
+    type: git
+    url: https://github.com/mklomp/mirte-ros-packages.git
+    version: develop
+  mirte-gazebo:
+    type: git
+    url: https://github.com/mklomp/mirte-gazebo.git
+    version: develop 

@@ -1,0 +1,38 @@
+insert
+
+# Architectural knowledge
+$a_move isa Action, has action-name "move";
+$f_velocity_smoother isa Function, has function-name "velocity_smoother", has always-improve true;
+(action:$a_move, required-function:$f_velocity_smoother) isa functional-requirement;
+
+$c_velocity_smoother isa LifeCycleNode, has component-name "velocity_smoother", has package "nav2_velocity_smoother", has executable "velocity_smoother";
+(function: $f_velocity_smoother, required-component: $c_velocity_smoother) isa function-design, has function-design-name "fd_velocity_smoother";
+
+$cp_max_vel_high isa ComponentParameter, has parameter-key "max_velocity", has parameter-value "[1.0,1.0,2.0]", has parameter-type 'double_array';
+$cp_max_vel_med isa ComponentParameter, has parameter-key "max_velocity", has parameter-value "[0.8,0.8,1.5]", has parameter-type 'double_array';
+$cp_max_vel_low isa ComponentParameter, has parameter-key "max_velocity", has parameter-value "[0.5,0.5,1.3]", has parameter-type 'double_array';
+
+$c_velocity_smoother_high_velocity (component: $c_velocity_smoother, parameter: $cp_max_vel_high) isa component-configuration,
+    has component-configuration-name "high velocity", has priority 1.0;
+$c_velocity_smoother_med_velocity (component: $c_velocity_smoother, parameter: $cp_max_vel_med) isa component-configuration,
+    has component-configuration-name "med velocity", has priority 2.0;
+$c_velocity_smoother_low_velocity (component: $c_velocity_smoother, parameter: $cp_max_vel_low) isa component-configuration,
+    has component-configuration-name "low velocity", has priority 3.0;
+
+
+# Qualitty attributes
+## Battery level
+$qa_battery isa QualityAttribute, has measure-name "battery_level", has description "Battery level in percentage.";
+
+
+## Nearest object
+$ea_laser_nearest_object isa EnvironmentalAttribute, has measure-name "laser_nearest_object";
+
+
+
+# Qualitty requirements
+(constraint: $qa_battery, constrained: $c_velocity_smoother_high_velocity) isa constraint, has attribute-value 0.75, has constraint-operator ">=";
+(constraint: $ea_laser_nearest_object, constrained: $c_velocity_smoother_high_velocity) isa constraint, has attribute-value 0.35, has constraint-operator ">";
+
+(constraint: $qa_battery, constrained: $c_velocity_smoother_med_velocity) isa constraint, has attribute-value 0.4, has constraint-operator ">=";
+(constraint: $ea_laser_nearest_object, constrained: $c_velocity_smoother_med_velocity) isa constraint, has attribute-value 0.25, has constraint-operator ">";

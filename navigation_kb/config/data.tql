@@ -1,0 +1,49 @@
+insert
+
+# === Waypoints
+$wp0 isa waypoint, has waypoint-name "wp_0";
+$wp1 isa waypoint, has waypoint-name "wp_1";
+$wp2 isa waypoint, has waypoint-name "wp_2";
+$wp3 isa waypoint, has waypoint-name "wp_3";
+$wp4 isa waypoint, has waypoint-name "wp_4";
+
+# === Corridors
+(insert all is-corridor facts)
+$c01 (from:$wp0, to:$wp1) isa corridor;
+$c02 (from:$wp0, to:$wp2) isa corridor;
+$c13 (from:$wp1, to:$wp3) isa corridor;
+$c23 (from:$wp2, to:$wp3) isa corridor;
+$c34 (from:$wp3, to:$wp4) isa corridor;
+
+# === Lighting
+$light01 (from:$wp0, to:$wp1) isa lighting-condition, has is-lit true, has is-dark false;
+$light02 (from:$wp0, to:$wp2) isa lighting-condition, has is-lit false, has is-dark true;
+$light13 (from:$wp1, to:$wp3) isa lighting-condition, has is-lit true, has is-dark false;
+$light23 (from:$wp2, to:$wp3) isa lighting-condition, has is-lit true, has is-dark false;
+$light34 (from:$wp3, to:$wp4) isa lighting-condition, has is-lit false, has is-dark true;
+
+# === Configurations
+$config1 isa configuration, has config-name "config1";
+$config2 isa configuration, has config-name "config2";
+$config3 isa configuration, has config-name "config3";
+$config4 isa configuration, has config-name "config4";
+
+# === Configuration Traits
+$config1_trait (configuration:$config1) isa config-trait,
+  has uses-lidar true, has uses-high-speed true, has uses-low-speed false;
+
+$config2_trait (configuration:$config2) isa config-trait,
+  has uses-lidar false, has uses-high-speed false, has uses-low-speed true;
+
+$config3_trait (configuration:$config3) isa config-trait,
+  has uses-lidar false, has uses-high-speed true, has uses-low-speed false;
+
+$config4_trait (configuration:$config4) isa config-trait,
+  has uses-lidar true, has uses-high-speed false, has uses-low-speed true;
+
+# === Battery
+$batt isa measure, has measure-name "battery-level", has value 50;
+
+# === Constraint: config1 requires batt >= 30
+$constraint1 (constrained:$config1, measured:$batt) isa constraint,
+  has operator ">=", has value 30.0;
