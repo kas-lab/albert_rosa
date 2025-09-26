@@ -67,3 +67,4 @@ protected:
 }  // namespace navigation_task_plan
 
 #endif  // NAVIGATION_GRAPH__NAVIGATE_CONTROLLER_HPP_
+

@@ -33,7 +33,7 @@ using NavigationGoalHandle =
 using NavigationFeedback =
     const std::shared_ptr<const nav2_msgs::action::NavigateToPose::Feedback>;
 
-class Move : public plansys2::ActionExecutorClient
+class Move : public rosa_task_plan_plansys::RosaAction
 {
 public:
   Move(const std::string & node_name,
@@ -43,8 +43,6 @@ public:
 
 private:
   geometry_msgs::msg::Pose current_pos_;
-  geometry_msgs::msg::PoseStamped get_waypoint(std::string waypoint);
-
 
   rclcpp::CallbackGroup::SharedPtr callback_group_action_client_;
 
@@ -77,3 +75,4 @@ private:
 } // end NAVIGATION_GRAPH
 
 #endif
+
