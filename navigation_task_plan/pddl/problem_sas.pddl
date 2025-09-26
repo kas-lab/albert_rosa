@@ -79,7 +79,7 @@
     (= (distance wp_3 wp_4) 10)
 
     ;; Battery
-    (= (battery-level) 100)
+    (= (battery-level) 70)
 
     ;; Energy costs based on speed and distance
     ;; High-speed: 1.5x distance
