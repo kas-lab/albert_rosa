@@ -1,38 +1,25 @@
-insert
+insert 
 
 # Architectural knowledge
 $a_move isa Action, has action-name "move";
-$f_velocity_smoother isa Function, has function-name "velocity_smoother", has always-improve true;
-(action:$a_move, required-function:$f_velocity_smoother) isa functional-requirement;
+$f_controller isa Function, has function-name "controller";
+(action:$a_move, required-function:$f_controller) isa functional-requirement;
 
-$c_velocity_smoother isa LifeCycleNode, has component-name "velocity_smoother", has package "nav2_velocity_smoother", has executable "velocity_smoother";
-(function: $f_velocity_smoother, required-component: $c_velocity_smoother) isa function-design, has function-design-name "fd_velocity_smoother";
+$c_controller_server isa LifeCycleNode, has component-name "controller_server", has package "nav2_controller", has executable "controller_server";
+(function: $f_controller, required-component: $c_controller_server) isa function-design, has function-design-name "fd_controller_server";
 
-$cp_max_vel_high isa ComponentParameter, has parameter-key "max_velocity", has parameter-value "[1.0,1.0,2.0]", has parameter-type 'double_array';
-$cp_max_vel_med isa ComponentParameter, has parameter-key "max_velocity", has parameter-value "[0.8,0.8,1.5]", has parameter-type 'double_array';
-$cp_max_vel_low isa ComponentParameter, has parameter-key "max_velocity", has parameter-value "[0.5,0.5,1.3]", has parameter-type 'double_array';
+$cp_max_vel_x_high isa ComponentParameter, has parameter-key "FollowPath.max_vel_x", has parameter-value "1.6", has parameter-type 'double';
+$cp_max_vel_x_low isa ComponentParameter, has parameter-key "FollowPath.max_vel_x", has parameter-value "1.2", has parameter-type 'double';
 
-$c_velocity_smoother_high_velocity (component: $c_velocity_smoother, parameter: $cp_max_vel_high) isa component-configuration,
-    has component-configuration-name "high velocity", has priority 1.0;
-$c_velocity_smoother_med_velocity (component: $c_velocity_smoother, parameter: $cp_max_vel_med) isa component-configuration,
-    has component-configuration-name "med velocity", has priority 2.0;
-$c_velocity_smoother_low_velocity (component: $c_velocity_smoother, parameter: $cp_max_vel_low) isa component-configuration,
-    has component-configuration-name "low velocity", has priority 3.0;
+$cp_max_vel_theta_high isa ComponentParameter, has parameter-key "FollowPath.max_vel_theta", has parameter-value "1.00", has parameter-type 'double';
+$cp_max_vel_theta_low isa ComponentParameter, has parameter-key "FollowPath.max_vel_theta", has parameter-value "0.80", has parameter-type 'double';
 
+$c_controller_config_high_speed (component: $c_controller_server, parameter: $cp_max_vel_x_high, parameter: $cp_max_vel_theta_high) isa component-configuration, 
+    has component-configuration-name "high speed", has priority 1.0;
+$c_controller_config_low_speed (component: $c_controller_server, parameter: $cp_max_vel_x_low, parameter: $cp_max_vel_theta_low) isa component-configuration, 
+    has component-configuration-name "low speed", has priority 2.0;
 
-# Qualitty attributes
-## Battery level
-$qa_battery isa QualityAttribute, has measure-name "battery_level", has description "Battery level in percentage.";
+# Qualitty attributes/Qualitty requirements
 
-
-## Nearest object
-$ea_laser_nearest_object isa EnvironmentalAttribute, has measure-name "laser_nearest_object";
-
-
-
-# Qualitty requirements
-(constraint: $qa_battery, constrained: $c_velocity_smoother_high_velocity) isa constraint, has attribute-value 0.75, has constraint-operator ">=";
-(constraint: $ea_laser_nearest_object, constrained: $c_velocity_smoother_high_velocity) isa constraint, has attribute-value 0.35, has constraint-operator ">";
-
-(constraint: $qa_battery, constrained: $c_velocity_smoother_med_velocity) isa constraint, has attribute-value 0.4, has constraint-operator ">=";
-(constraint: $ea_laser_nearest_object, constrained: $c_velocity_smoother_med_velocity) isa constraint, has attribute-value 0.25, has constraint-operator ">";
+$qa_battery isa QualityAttribute, has measure-name "battery";
+(constraint: $qa_battery, constrained: $c_controller_config_high_speed) isa constraint, has attribute-value 0.75, has constraint-operator ">=";
