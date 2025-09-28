@@ -41,10 +41,9 @@ namespace navigation_task_plan
 
     ros_typedb_cb_group_ = create_callback_group(
         rclcpp::CallbackGroupType::MutuallyExclusive);
-
     typedb_query_cli_ = this->create_client<ros_typedb_msgs::srv::Query>(
         "ros_typedb/query",
-        rmw_qos_profile_services_default,
+        rclcpp::QoS(rclcpp::ServicesQoS()),
         ros_typedb_cb_group_);
   }
 
@@ -107,11 +106,17 @@ namespace navigation_task_plan
       return;
     }
 
+    // [CHANGED for Rolling]
+    // Old code checked `success` or `plan.items` inside ExecutePlan_Result.
+    // In Rolling, the result has no `plan` field anymore.
     if (!executor_client_->execute_and_check_plan() && executor_client_->getResult())
     {
-      if (executor_client_->getResult().value().success)
+      auto result = executor_client_->getResult();
+      if (result.has_value())
       {
-        RCLCPP_INFO(this->get_logger(), "Plan execution finished with success!");
+        RCLCPP_INFO(this->get_logger(),
+                    "Plan execution finished successfully!");  // [CHANGED for Rolling]
+
         this->finish_controlling();
       }
       else
@@ -122,14 +127,21 @@ namespace navigation_task_plan
       }
     }
 
+    // [CHANGED for Rolling]
+    // Now rely only on feedback to detect failures.
     auto feedback = executor_client_->getFeedBack();
     for (const auto &action_feedback : feedback.action_execution_status)
     {
       if (action_feedback.status == plansys2_msgs::msg::ActionExecutionInfo::FAILED)
       {
-        std::string error_str_ = "[" + action_feedback.action + "] finished with error: " + action_feedback.message_status;
+        std::string error_str_ = "[" + action_feedback.action +
+                                 "] finished with error: " + action_feedback.message_status;
         RCLCPP_ERROR(this->get_logger(), error_str_.c_str());
-        break;
+
+        // Trigger replanning immediately on failure
+        RCLCPP_INFO(this->get_logger(), "Replanning due to action failure!");
+        this->execute_plan();
+        return;
       }
 
       std::string arguments_str_ = " ";
@@ -142,6 +154,8 @@ namespace navigation_task_plan
       RCLCPP_INFO(this->get_logger(), feedback_str_.c_str());
     }
   }
+
+
 
   // void NavigationController::fetch_items(){
   //   RCLCPP_INFO(this->get_logger(), " Fecthing items");
