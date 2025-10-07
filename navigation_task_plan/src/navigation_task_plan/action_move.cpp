@@ -146,7 +146,7 @@ private:
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  auto node = std::make_shared<MoveAction>("move", 500ms);
+  auto node = std::make_shared<MoveAction>("action_move", 500ms);
 
   node->trigger_transition(lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE);
 
