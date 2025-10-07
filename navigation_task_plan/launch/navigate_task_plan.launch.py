@@ -16,47 +16,54 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
     navigation_task_plan_path = get_package_share_directory('navigation_task_plan')
     plansys_path = get_package_share_directory('plansys2_bringup')
+
     plansys2_bringup = IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(os.path.join(
-                plansys_path,
-                'launch',
-                'plansys2_bringup_launch_distributed.py')),
-            launch_arguments={
-                'model_file':
-                    navigation_task_plan_path + '/pddl/domain_sas.pddl',
-                'problem_file':
-                    navigation_task_plan_path + '/pddl/problem_sas.pddl',
-            }.items()
-        )
+        PythonLaunchDescriptionSource(os.path.join(
+            plansys_path,
+            'launch',
+            'plansys2_bringup_launch_distributed.py')),
+        launch_arguments={
+            'model_file': navigation_task_plan_path + '/pddl/domain_sas.pddl',
+            'problem_file': navigation_task_plan_path + '/pddl/problem_sas.pddl',
+        }.items()
+    )
 
     waypoint_file = os.path.join(navigation_task_plan_path, 'config', 'waypoints.yaml')
+
     navigation_controller_node = Node(
         package='navigation_task_plan',
         executable='navigate',
-        parameters=[{'rosa_actions': ['move']}]
+        parameters=[{'rosa_actions': ['move_dark', 'move_lit']}]
     )
 
     pddl_move_action_node_dark = Node(
         package='navigation_task_plan',
         executable='action_move',
-        parameters=[waypoint_file,{'action_name': 'move_dark'}]
+        name='action_move_dark',
+        parameters=[
+            os.path.join(navigation_task_plan_path, 'config', 'waypoints_dark.yaml'),
+            {'action_name': 'move_dark'}
+        ]
     )
 
     pddl_move_action_node_lit = Node(
         package='navigation_task_plan',
         executable='action_move',
-        parameters=[waypoint_file,{'action_name': 'move_lit'}]
+        name='action_move_lit',
+        parameters=[
+            os.path.join(navigation_task_plan_path, 'config', 'waypoints_lit.yaml'),
+            {'action_name': 'move_lit'}
+        ]
     )
+
 
     return LaunchDescription([
         plansys2_bringup,
@@ -64,3 +71,4 @@ def generate_launch_description():
         pddl_move_action_node_dark,
         pddl_move_action_node_lit
     ])
+
