@@ -5,12 +5,14 @@ waypoint-name sub attribute, value string;
 config-name sub attribute, value string;
 parameter-key sub attribute, value string;
 parameter-value sub attribute, value string;
+robot-name sub attribute, value string; 
 parameter-type sub attribute, value string;
 attribute-name sub attribute, value string;
 operator sub attribute, value string;
 value sub attribute, value double;
 priority sub attribute, value double;
 function-design-name sub attribute, value string;
+measure-name sub attribute, value string;  # <-- added
 
 is-lit sub attribute, value boolean;
 is-dark sub attribute, value boolean;
@@ -48,43 +50,82 @@ quality-attribute sub entity,
     owns attribute-name;
 
 measure sub entity,
+    owns measure-name,       # <-- added
     owns value;
 
+telemetry sub entity,
+    owns value;
+
+robot sub entity,
+    owns robot-name;
+
 # === RELATIONS ===
+
+# Corridors between waypoints
 corridor sub relation,
     relates from,
     relates to;
+waypoint plays corridor:from;
+waypoint plays corridor:to;
 
+# Lighting between waypoints
 lighting-condition sub relation,
     relates from,
     relates to,
     owns is-lit,
     owns is-dark;
+waypoint plays lighting-condition:from;
+waypoint plays lighting-condition:to;
 
+# Configuration traits
 config-trait sub relation,
     relates configuration,
     owns uses-lidar,
     owns uses-high-speed,
     owns uses-low-speed;
+configuration plays config-trait:configuration;
 
+# Component-level config
 component-configuration sub relation,
     relates component,
     relates parameter,
     owns config-name,
     owns priority;
+component plays component-configuration:component;
+component-parameter plays component-configuration:parameter;
 
+# Function structure
 function-design sub relation,
     relates function,
     relates required-component,
     owns function-design-name;
+function plays function-design:function;
+component plays function-design:required-component;
 
+# Functional requirement for actions
 functional-requirement sub relation,
     relates action,
     relates required-function;
+action plays functional-requirement:action;
+function plays functional-requirement:required-function;
 
+# Constraints and measures
 constraint sub relation,
-    relates constraint,       # what attribute is constrained (e.g. battery)
-    relates constrained,      # config or component being constrained
-    relates measured,         # measure of the attribute (e.g. battery level 50)
+    relates constraint,
+    relates constrained,
+    relates measured,
     owns operator,
     owns value;
+
+# Energy cost of a corridor
+energy-cost sub relation,
+    relates corridor,
+    owns value;
+corridor plays energy-cost:corridor;
+
+# Robot telemetry linkage
+measured_as sub relation,
+    relates robot,
+    relates telemetry;
+robot plays measured_as:robot;
+telemetry plays measured_as:telemetry;

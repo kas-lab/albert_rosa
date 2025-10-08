@@ -18,6 +18,7 @@
 // #include "lifecycle_msgs/msg/transition_event.hpp"
 
 #include "navigate.hpp"
+#include "plansys2_pddl_parser/Utils.hpp"
 
 using namespace std::chrono_literals;
 using namespace std::placeholders;
@@ -40,7 +41,7 @@ namespace navigation_task_plan
         1s, std::bind(&NavigationController::step, this), step_timer_cb_group_);
 
     ros_typedb_cb_group_ = create_callback_group(
-        rclcpp::CallbackGroupType::MutuallyExclusive);
+    rclcpp::CallbackGroupType::Reentrant); 
     typedb_query_cli_ = this->create_client<ros_typedb_msgs::srv::Query>(
         "ros_typedb/query",
         rclcpp::QoS(rclcpp::ServicesQoS()),
@@ -51,44 +52,330 @@ namespace navigation_task_plan
   {
   }
 
+
+ void NavigationController::build_problem_from_kb()
+{
+  problem_expert_->clearKnowledge();
+
+  // ===== WAYPOINTS =====
+  {
+    auto req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+    req->query_type = "fetch";
+    req->query = "match $wp isa waypoint, has waypoint-name $name; fetch $name;";
+    auto fut = typedb_query_cli_->async_send_request(req);
+
+    if (!fut.valid() || fut.wait_for(1s) != std::future_status::ready) {
+      RCLCPP_WARN(get_logger(), "Waypoint query invalid or timed out");
+    } else {
+      auto resp = fut.get();
+      if (resp->success) {
+        for (const auto &res : resp->results) {
+          for (const auto &attr : res.attributes) {
+            if (attr.label == "name") {
+              problem_expert_->addInstance(plansys2::Instance(attr.value.string_value, "waypoint"));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ===== CONFIGURATIONS =====
+  {
+    auto req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+    req->query_type = "fetch";
+    req->query = "match $c isa configuration, has config-name $n; fetch $n;";
+    auto fut = typedb_query_cli_->async_send_request(req);
+
+    if (!fut.valid() || fut.wait_for(1s) != std::future_status::ready) {
+      RCLCPP_WARN(get_logger(), "Configuration query invalid or timed out");
+    } else {
+      auto resp = fut.get();
+      if (resp->success) {
+        for (const auto &res : resp->results) {
+          for (const auto &attr : res.attributes) {
+            if (attr.label == "n") {
+              auto cfg = attr.value.string_value;
+              problem_expert_->addInstance(plansys2::Instance(cfg, "configuration"));
+              problem_expert_->addPredicate(plansys2::Predicate("(can-use " + cfg + ")"));
+              problem_expert_->addPredicate(plansys2::Predicate("(config-valid " + cfg + ")"));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ===== INITIAL POSITION =====
+  problem_expert_->addPredicate(plansys2::Predicate("(at wp_0)"));
+
+  // ===== CORRIDORS =====
+  {
+    auto req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+    req->query_type = "fetch";
+    req->query =
+      "match $c (from:$w1, to:$w2) isa corridor; "
+      "$w1 has waypoint-name $w1n; $w2 has waypoint-name $w2n; "
+      "fetch $w1n; $w2n;";
+    auto fut = typedb_query_cli_->async_send_request(req);
+
+    if (!fut.valid() || fut.wait_for(1s) != std::future_status::ready) {
+      RCLCPP_WARN(get_logger(), "Corridor query invalid or timed out");
+    } else {
+      auto resp = fut.get();
+      if (resp->success) {
+        for (const auto &res : resp->results) {
+          std::string a, b;
+          for (const auto &attr : res.attributes) {
+            if (attr.label == "w1n") a = attr.value.string_value;
+            if (attr.label == "w2n") b = attr.value.string_value;
+          }
+          if (!a.empty() && !b.empty()) {
+            problem_expert_->addPredicate(plansys2::Predicate("(is-corridor " + a + " " + b + ")"));
+          }
+        }
+      }
+    }
+  }
+
+  // ===== LIGHTING =====
+  {
+    auto req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+    req->query_type = "fetch";
+    req->query =
+      "match $l (from:$w1, to:$w2) isa lighting-condition, has is-dark $isd, has is-lit $isl; "
+      "$w1 has waypoint-name $w1n; $w2 has waypoint-name $w2n; "
+      "fetch $w1n; $w2n; $isd; $isl;";
+    auto fut = typedb_query_cli_->async_send_request(req);
+
+    if (!fut.valid() || fut.wait_for(1s) != std::future_status::ready) {
+      RCLCPP_WARN(get_logger(), "Lighting query invalid or timed out");
+    } else {
+      auto resp = fut.get();
+      if (resp->success) {
+        for (const auto &res : resp->results) {
+          std::string a, b;
+          bool is_dark = false, is_lit = false;
+          for (const auto &attr : res.attributes) {
+            if (attr.label == "w1n") a = attr.value.string_value;
+            if (attr.label == "w2n") b = attr.value.string_value;
+            if (attr.label == "isd") is_dark = attr.value.bool_value;
+            if (attr.label == "isl") is_lit = attr.value.bool_value;
+          }
+          if (!a.empty() && !b.empty()) {
+            if (is_dark) problem_expert_->addPredicate(plansys2::Predicate("(is-dark " + a + " " + b + ")"));
+            if (is_lit)  problem_expert_->addPredicate(plansys2::Predicate("(is-lit " + a + " " + b + ")"));
+          }
+        }
+      }
+    }
+  }
+
+  // ===== CONFIG TRAITS =====
+  {
+    auto req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+    req->query_type = "fetch";
+    req->query =
+      "match $t (configuration:$c) isa config-trait; "
+      "$c has config-name $cn; "
+      "$t has uses-lidar $ul; $t has uses-high-speed $uh; $t has uses-low-speed $us; "
+      "fetch $cn; $ul; $uh; $us;";
+    auto fut = typedb_query_cli_->async_send_request(req);
+
+    if (!fut.valid() || fut.wait_for(1s) != std::future_status::ready) {
+      RCLCPP_WARN(get_logger(), "Config-trait query invalid or timed out");
+    } else {
+      auto resp = fut.get();
+      if (resp->success) {
+        for (const auto &res : resp->results) {
+          std::string c; bool ul = false, uh = false, us = false;
+          for (const auto &attr : res.attributes) {
+            if (attr.label == "cn") c = attr.value.string_value;
+            if (attr.label == "ul") ul = attr.value.bool_value;
+            if (attr.label == "uh") uh = attr.value.bool_value;
+            if (attr.label == "us") us = attr.value.bool_value;
+          }
+          if (!c.empty()) {
+            if (ul) problem_expert_->addPredicate(plansys2::Predicate("(uses-lidar " + c + ")"));
+            if (uh) problem_expert_->addPredicate(plansys2::Predicate("(uses-high-speed " + c + ")"));
+            if (us) problem_expert_->addPredicate(plansys2::Predicate("(uses-low-speed " + c + ")"));
+          }
+        }
+      }
+    }
+  }
+
+  // ===== CAN-TRAVERSE =====
+  {
+    auto req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+    req->query_type = "fetch";
+    req->query =
+      "match $c (from:$w1, to:$w2) isa corridor; $w1 has waypoint-name $w1n; $w2 has waypoint-name $w2n; "
+      "$cfg isa configuration, has config-name $cn; "
+      "fetch $w1n; $w2n; $cn;";
+    auto fut = typedb_query_cli_->async_send_request(req);
+
+    if (!fut.valid() || fut.wait_for(1s) != std::future_status::ready) {
+      RCLCPP_WARN(get_logger(), "Can-traverse query invalid or timed out");
+    } else {
+      auto resp = fut.get();
+      if (resp->success) {
+        for (const auto &res : resp->results) {
+          std::string a, b, cfg;
+          for (const auto &attr : res.attributes) {
+            if (attr.label == "w1n") a = attr.value.string_value;
+            if (attr.label == "w2n") b = attr.value.string_value;
+            if (attr.label == "cn")  cfg = attr.value.string_value;
+          }
+          if (!a.empty() && !b.empty() && !cfg.empty()) {
+            problem_expert_->addPredicate(plansys2::Predicate("(can-traverse " + a + " " + b + " " + cfg + ")"));
+          }
+        }
+      }
+    }
+  }
+
+  // ===== BATTERY =====
+  {
+    double battery = 70.0; // fallback
+    auto req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+    req->query_type = "fetch";
+    req->query =
+      "match $m isa measure, has measure-name \"battery-level\", has value $v; fetch $v;";
+    auto fut = typedb_query_cli_->async_send_request(req);
+
+    if (fut.valid() && fut.wait_for(1s) == std::future_status::ready) {
+      auto resp = fut.get();
+      if (resp->success) {
+        for (const auto &res : resp->results) {
+          for (const auto &attr : res.attributes) {
+            if (attr.label == "v") battery = attr.value.double_value;
+          }
+        }
+      }
+    }
+
+    plansys2::Function f_batt;
+    f_batt.name = "battery-level";
+    f_batt.value = battery;
+    f_batt.parameters = {};
+    if (!problem_expert_->existFunction(f_batt))
+      problem_expert_->addFunction(f_batt);
+    else
+      problem_expert_->updateFunction(f_batt);
+  }
+
+  // ===== DISTANCES =====
+  {
+    auto req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+    req->query_type = "fetch";
+    req->query =
+      "match $c (from:$w1, to:$w2) isa corridor; "
+      "$w1 has waypoint-name $a; $w2 has waypoint-name $b; "
+      "fetch $a; $b;";
+    auto fut = typedb_query_cli_->async_send_request(req);
+
+    if (!fut.valid() || fut.wait_for(1s) != std::future_status::ready) {
+      RCLCPP_WARN(get_logger(), "Distance query invalid or timed out");
+    } else {
+      auto resp = fut.get();
+      if (resp->success) {
+        for (const auto &res : resp->results) {
+          std::string a, b;
+          for (const auto &attr : res.attributes) {
+            if (attr.label == "a") a = attr.value.string_value;
+            if (attr.label == "b") b = attr.value.string_value;
+          }
+          if (!a.empty() && !b.empty()) {
+            double d = 10.0;
+            plansys2::Function f;
+            f.name = "distance";
+            plansys2_msgs::msg::Param p1, p2;
+            p1.name = a; p2.name = b;
+            f.parameters = {p1, p2};
+            f.value = d;
+            if (!problem_expert_->existFunction(f))
+              problem_expert_->addFunction(f);
+            else
+              problem_expert_->updateFunction(f);
+          }
+        }
+      }
+    }
+  }
+
+  // ===== ENERGY COST =====
+  {
+    auto req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+    req->query_type = "fetch";
+    req->query =
+      "match $c (from:$w1, to:$w2) isa corridor; "
+      "$e (corridor:$c) isa energy-cost, has value $cost; "
+      "$w1 has waypoint-name $a; $w2 has waypoint-name $b; "
+      "$cfg isa configuration, has config-name $cn; "
+      "fetch $a; $b; $cn; $cost;";
+    auto fut = typedb_query_cli_->async_send_request(req);
+
+    if (!fut.valid() || fut.wait_for(1s) != std::future_status::ready) {
+      RCLCPP_WARN(get_logger(), "Energy-cost query invalid or timed out");
+    } else {
+      auto resp = fut.get();
+      if (resp->success) {
+        for (const auto &res : resp->results) {
+          std::string a, b, cn; double ec = 10.0;
+          for (const auto &attr : res.attributes) {
+            if (attr.label == "a") a = attr.value.string_value;
+            if (attr.label == "b") b = attr.value.string_value;
+            if (attr.label == "cn") cn = attr.value.string_value;
+            if (attr.label == "cost") ec = attr.value.double_value;
+          }
+          if (!a.empty() && !b.empty() && !cn.empty()) {
+            plansys2::Function f;
+            f.name = "energy-cost";
+            plansys2_msgs::msg::Param p1, p2, p3;
+            p1.name = a; p2.name = b; p3.name = cn;
+            f.parameters = {p1, p2, p3};
+            f.value = ec;
+            if (!problem_expert_->existFunction(f))
+              problem_expert_->addFunction(f);
+            else
+              problem_expert_->updateFunction(f);
+          }
+        }
+      }
+    }
+  }
+
+  // ===== GOAL =====
+  problem_expert_->setGoal(plansys2::Goal("(at wp_4)"));
+}
+
+
  void NavigationController::execute_plan()
   {
-    this->fetch_waypoints();
-    this->fetch_corridors();
-    this->fetch_lighting();
+    if (!typedb_query_cli_->service_is_ready()) {
+      RCLCPP_WARN(get_logger(), "TypeDB not ready, skipping planning tick");
+      return;
+    }
+
+    build_problem_from_kb();
 
     auto domain = domain_expert_->getDomain();
     auto problem = problem_expert_->getProblem();
     auto plan = planner_client_->getPlan(domain, problem);
 
-    if (!plan.has_value())
-    {
-      std::cout << "=== PLAN NOT FOUND ===" << std::endl;
-      std::cout << "Current Goal: " << parser::pddl::toString(problem_expert_->getGoal()) << std::endl;
-
-      std::cout << "--- Instances ---" << std::endl;
-      for (const auto &instance : problem_expert_->getInstances())
-      {
-        std::cout << "Instance: " << instance.name << " of type: " << instance.type << std::endl;
-      }
-
-      std::cout << "--- Predicates ---" << std::endl;
-      for (const auto &predicate : problem_expert_->getPredicates())
-      {
-        std::cout << parser::pddl::toString(predicate) << std::endl;
-      }
-
+    if (!plan.has_value()) {
+      RCLCPP_WARN(get_logger(), "Plan not found. Current goal: %s",
+        parser::pddl::toString(problem_expert_->getGoal()).c_str());
       return;
     }
 
-    std::cout << "=== PLAN FOUND ===" << std::endl;
-    for (const auto &item : plan->items)
-    {
+    for (const auto &item : plan->items) {
       RCLCPP_INFO(this->get_logger(), "  Action: '%s'", item.action.c_str());
     }
-
     executor_client_->start_plan_execution(plan.value());
   }
+
 
 
   void NavigationController::finish_controlling()
@@ -97,216 +384,52 @@ namespace navigation_task_plan
     this->executor_client_->cancel_plan_execution();
   }
 
+
+
   void NavigationController::step()
   {
-    if (first_iteration_)
-    {
-      this->execute_plan();
+    if (first_iteration_) {
+      execute_plan();
       first_iteration_ = false;
       return;
     }
 
-    // [CHANGED for Rolling]
-    // Old code checked `success` or `plan.items` inside ExecutePlan_Result.
-    // In Rolling, the result has no `plan` field anymore.
-    if (!executor_client_->execute_and_check_plan() && executor_client_->getResult())
-    {
+    // Example: if some typedb condition tells you to re-evaluate
+    // 1) Refresh problem
+    // build_problem_from_kb();
+    // 2) Trigger replan
+    // system("ros2 service call /executor/replan_for_execution std_srvs/srv/Trigger {}");
+
+    // Continue monitoring action feedback and errors as you already do
+    if (!executor_client_->execute_and_check_plan() && executor_client_->getResult()) {
       auto result = executor_client_->getResult();
-      if (result.has_value())
-      {
-        RCLCPP_INFO(this->get_logger(),
-                    "Plan execution finished successfully!");  // [CHANGED for Rolling]
-
-        this->finish_controlling();
-      }
-      else
-      {
-        RCLCPP_INFO(this->get_logger(), "Replanning!");
-        this->execute_plan();
+      if (result.has_value()) {
+        RCLCPP_INFO(this->get_logger(), "Plan execution finished");
+        finish_controlling();
+        return;
+      } else {
+        RCLCPP_INFO(this->get_logger(), "Replanning");
+        execute_plan();
         return;
       }
     }
 
-    // [CHANGED for Rolling]
-    // Now rely only on feedback to detect failures.
     auto feedback = executor_client_->getFeedBack();
-    for (const auto &action_feedback : feedback.action_execution_status)
-    {
-      if (action_feedback.status == plansys2_msgs::msg::ActionExecutionInfo::FAILED)
-      {
-        std::string error_str_ = "[" + action_feedback.action +
-                                 "] finished with error: " + action_feedback.message_status;
-        RCLCPP_ERROR(this->get_logger(), error_str_.c_str());
-
-        // Trigger replanning immediately on failure
-        RCLCPP_INFO(this->get_logger(), "Replanning due to action failure!");
-        this->execute_plan();
+    for (const auto &ae : feedback.action_execution_status) {
+      if (ae.status == plansys2_msgs::msg::ActionExecutionInfo::FAILED) {
+        RCLCPP_ERROR(this->get_logger(), "[%s] failed: %s",
+                    ae.action.c_str(), ae.message_status.c_str());
+        // Update problem from KB then replan
+        build_problem_from_kb();
+        system("ros2 service call /executor/replan_for_execution std_srvs/srv/Trigger {}");
         return;
       }
-
-      std::string arguments_str_ = " ";
-      for (const auto &arguments : action_feedback.arguments)
-      {
-        arguments_str_ += arguments + " ";
-      }
-      std::string feedback_str_ = "[" + action_feedback.action + arguments_str_ +
-                                  std::to_string(action_feedback.completion * 100.0) + "%]";
-      RCLCPP_INFO(this->get_logger(), feedback_str_.c_str());
     }
   }
 
 
 
-  // void NavigationController::fetch_items(){
-  //   RCLCPP_INFO(this->get_logger(), " Fecthing items");
-  //   if(!typedb_query_cli_->service_is_ready()){
-  //     return;
-  //   }
 
-  //   auto request = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
-  //   request->query_type = "fetch";
-  //   request->query = "match $item isa item; fetch $item: item-name;";
-
-  //   auto typedb_query_result_ = typedb_query_cli_->async_send_request(request);
-
-  //   // Wait for the result.
-  //   if (typedb_query_result_.wait_for(1s) != std::future_status::ready) {
-  //     return;
-  //   }
-
-  //   auto result_ = typedb_query_result_.get();
-  //   if(!result_->success){
-  //     return;
-  //   }
-
-  //   for (const auto& result: result_->results) {
-  //     for (const auto& attribute: result.attributes) {
-  //       if (attribute.label == "item-name") {
-  //         problem_expert_->addInstance(plansys2::Instance(attribute.value.string_value, "item"));
-  //       }
-  //     }
-  //   }
-  // }
-
-  void NavigationController::fetch_waypoints()
-{
-  if (!typedb_query_cli_->service_is_ready()) return;
-
-  auto request = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
-  request->query_type = "fetch";
-  request->query = "match $wp isa waypoint, has waypoint-name $name; fetch $name;";
-
-  auto result = typedb_query_cli_->async_send_request(request);
-  if (result.wait_for(1s) != std::future_status::ready) return;
-
-  auto response = result.get();
-  if (!response->success) return;
-
-  for (const auto &res : response->results) {
-    for (const auto &attr : res.attributes) {
-      if (attr.label == "name") {
-        problem_expert_->addInstance(plansys2::Instance(attr.value.string_value, "waypoint"));
-      }
-    }
-  }
-}
-
-void NavigationController::fetch_corridors()
-{
-  if (!typedb_query_cli_->service_is_ready()) return;
-
-  auto request = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
-  request->query_type = "fetch";
-  request->query =
-    "match $c (from:$w1, to:$w2) isa corridor; "
-    "$w1 has waypoint-name $w1_name; "
-    "$w2 has waypoint-name $w2_name; "
-    "fetch $w1_name; $w2_name;";
-
-  auto result = typedb_query_cli_->async_send_request(request);
-  if (result.wait_for(1s) != std::future_status::ready) return;
-
-  auto response = result.get();
-  if (!response->success) return;
-
-  for (const auto &res : response->results) {
-    std::string w1, w2;
-    for (const auto &attr : res.attributes) {
-      if (attr.label == "w1_name") w1 = attr.value.string_value;
-      else if (attr.label == "w2_name") w2 = attr.value.string_value;
-    }
-    problem_expert_->addPredicate(plansys2::Predicate("(path " + w1 + " " + w2 + ")"));
-  }
-}
-
-void NavigationController::fetch_lighting()
-{
-  if (!typedb_query_cli_->service_is_ready()) return;
-
-  auto request = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
-  request->query_type = "fetch";
-  request->query =
-    "match $c (from:$w1, to:$w2) isa corridor; "
-    "$w1 has waypoint-name $w1_name; "
-    "$w2 has waypoint-name $w2_name; "
-    "$l (from:$w1, to:$w2) isa lighting-condition, has is-dark true; "
-    "fetch $w1_name; $w2_name;";
-
-  auto result = typedb_query_cli_->async_send_request(request);
-  if (result.wait_for(1s) != std::future_status::ready) return;
-
-  auto response = result.get();
-  if (!response->success) return;
-
-  for (const auto &res : response->results) {
-    std::string w1, w2;
-    for (const auto &attr : res.attributes) {
-      if (attr.label == "w1_name") w1 = attr.value.string_value;
-      else if (attr.label == "w2_name") w2 = attr.value.string_value;
-    }
-    problem_expert_->addPredicate(plansys2::Predicate("(is-dark-" + w1 + "-" + w2 + ")"));
-  }
-}
-
-
-  // void NavigationController::fetch_delivery_locations() {
-  //   if(!typedb_query_cli_->service_is_ready()){
-  //     return;
-  //   }
-
-  //   auto request = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
-  //   request->query_type = "fetch";
-  //   request->query = "match $item isa item, has item-name $item-name; "
-  //     "(item:$item, room:$room) isa delivery-location;"
-  //     "$room has room-name $room-name;"
-  //     "fetch $item-name; $room-name;";
-
-  //   auto typedb_query_result_ = typedb_query_cli_->async_send_request(request);
-
-  //   // Wait for the result.
-  //   if (typedb_query_result_.wait_for(1s) != std::future_status::ready) {
-  //     return;
-  //   }
-
-  //   auto result_ = typedb_query_result_.get();
-  //   if(!result_->success){
-  //     return;
-  //   }
-
-  //   for (const auto& result: result_->results) {
-  //     std::string item_name;
-  //     std::string room_name;
-  //     for (const auto& attribute: result.attributes) {
-  //       if (attribute.label == "item-name") {
-  //         item_name = attribute.value.string_value;
-  //       } else if (attribute.label == "room-name") {
-  //         room_name = attribute.value.string_value;
-  //       }
-  //     }
-  //     auto predicate = "(item_delivery_location " + item_name + " " + room_name + ")";
-  //     problem_expert_->addPredicate(plansys2::Predicate(predicate));
-  //   }
-  // }
 
 } // namespace
 
