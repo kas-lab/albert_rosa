@@ -22,11 +22,10 @@
 #include "plansys2_executor/ExecutorClient.hpp"
 #include "plansys2_planner/PlannerClient.hpp"
 #include "plansys2_problem_expert/ProblemExpertClient.hpp"
-
-// Needed for parser::pddl::fromString()
 #include "plansys2_pddl_parser/Utils.hpp"
 
 #include "rosa_task_plan_plansys/rosa_plansys_controller.hpp"
+
 
 namespace navigation_task_plan
 {
@@ -53,17 +52,21 @@ protected:
 
   // --- Execution state ---
   bool first_iteration_ = true;
-
+  std::vector<std::pair<std::string, std::string>> corridor_pairs_; 
   // --- Core logic ---
   void build_problem_from_kb();  // NEW: dynamically constructs the problem from TypeDB
   void execute_plan();
   void step();
   void finish_controlling();
 
-  // --- (Legacy fetch functions no longer used but kept for reference/testing) ---
   void fetch_waypoints();
   void fetch_corridors();
-  void fetch_lighting();
+  void fetch_configurations();
+  void fetch_config_traits();
+  void fetch_lighting_conditions();
+  void fetch_energy_costs();
+  void fetch_battery_and_feasibility();
+  void fetch_goal();
 };
 
 }  // namespace navigation_task_plan

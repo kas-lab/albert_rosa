@@ -1,12 +1,8 @@
 (define (domain albert)
-  (:requirements :typing :negative-preconditions :fluents)
+  (:requirements :typing :negative-preconditions :equality :fluents)
 
   (:types
     waypoint configuration
-  )
-
-  (:constants
-    config1 config2 config3 config4 - configuration
   )
 
   (:predicates
@@ -17,6 +13,7 @@
     (can-use ?c - configuration)
     (config-valid ?c - configuration)
     (can-traverse ?from ?to - waypoint ?c - configuration)
+    (has-enough-battery ?from ?to - waypoint ?c - configuration)
 
     ;; Properties
     (uses-lidar ?c - configuration)
@@ -26,7 +23,6 @@
 
   (:functions
     (battery-level)
-    (distance ?from - waypoint ?to - waypoint)
     (energy-cost ?from - waypoint ?to - waypoint ?c - configuration)
   )
   
@@ -39,7 +35,7 @@
       (can-use ?c)
       (config-valid ?c)
       (can-traverse ?from ?to ?c)
-      (>= (battery-level) (energy-cost ?from ?to ?c))
+      (has-enough-battery ?from ?to ?c)
     )
     :effect (and
       (not (at ?from))
@@ -58,7 +54,7 @@
       (can-use ?c)
       (config-valid ?c)
       (can-traverse ?from ?to ?c)
-      (>= (battery-level) (energy-cost ?from ?to ?c))
+      (has-enough-battery ?from ?to ?c)
     )
     :effect (and
       (not (at ?from))

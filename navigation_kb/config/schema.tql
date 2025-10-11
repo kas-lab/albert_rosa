@@ -13,6 +13,7 @@ value sub attribute, value double;
 priority sub attribute, value double;
 function-design-name sub attribute, value string;
 measure-name sub attribute, value string;  # <-- added
+goal-name sub attribute, value string;
 
 is-lit sub attribute, value boolean;
 is-dark sub attribute, value boolean;
@@ -57,9 +58,13 @@ telemetry sub entity,
     owns value;
 
 robot sub entity,
-    owns robot-name;
 
-# === RELATIONS ===
+    owns robot-name;
+goal sub entity,
+  owns goal-name;
+
+
+# # === RELATIONS ===
 
 # Corridors between waypoints
 corridor sub relation,
@@ -120,12 +125,16 @@ constraint sub relation,
 # Energy cost of a corridor
 energy-cost sub relation,
     relates corridor,
+    relates configuration,
     owns value;
-corridor plays energy-cost:corridor;
 
-# Robot telemetry linkage
-measured_as sub relation,
-    relates robot,
-    relates telemetry;
-robot plays measured_as:robot;
-telemetry plays measured_as:telemetry;
+corridor plays energy-cost:corridor;
+configuration plays energy-cost:configuration;
+
+
+# # Robot telemetry linkage
+# measured_as sub relation,
+#     relates robot,
+#     relates telemetry;
+# robot plays measured_as:robot;
+# telemetry plays measured_as:telemetry;
