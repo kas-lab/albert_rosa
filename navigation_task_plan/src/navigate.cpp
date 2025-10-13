@@ -23,6 +23,16 @@ NavigationController::NavigationController(const std::string &node_name)
   ros_typedb_cb_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
   typedb_query_cli_ = this->create_client<ros_typedb_msgs::srv::Query>(
       "ros_typedb/query", rclcpp::QoS(rclcpp::ServicesQoS()), ros_typedb_cb_group_);
+
+  // --- Proactive adaptation loop initialization ---
+  battery_sub_ = this->create_subscription<sensor_msgs::msg::BatteryState>(
+      "/battery_state", 10, std::bind(&NavigationController::batteryCallback, this, _1));
+
+  proactive_timer_ = this->create_wall_timer(
+      3s, std::bind(&NavigationController::evaluatePlanFeasibility, this));
+
+  RCLCPP_INFO(this->get_logger(), "Proactive adaptation loop initialized.");
+
 }
 
 NavigationController::~NavigationController() = default;
@@ -332,6 +342,75 @@ void NavigationController::fetch_goal()
     RCLCPP_INFO(get_logger(), "Fetched goal from KB: (at %s)", goal_name.c_str());
   }
 }
+void NavigationController::batteryCallback(const sensor_msgs::msg::BatteryState::SharedPtr msg)
+{
+  battery_level_ = msg->percentage;
+  RCLCPP_DEBUG(this->get_logger(), "Battery updated: %.2f%%", battery_level_);
+}
+
+double NavigationController::computePredictedCost()
+{
+  // Later, replace this with a query to TypeDB to get energy-cost values
+  return 35.0;  // static test value (%)
+}
+
+void NavigationController::triggerProactiveAdaptation()
+{
+  RCLCPP_WARN(this->get_logger(),
+    "Proactive adaptation triggered: battery %.1f < predicted %.1f + margin %.1f",
+    battery_level_, predicted_cost_, safety_margin_);
+
+  // --- Create isolated node for Nav2 parameter change ---
+  auto param_node = std::make_shared<rclcpp::Node>("nav2_param_client");
+  auto param_client = std::make_shared<rclcpp::SyncParametersClient>(
+      param_node,
+      "/controller_server"
+  );
+
+  if (param_client->wait_for_service(std::chrono::seconds(3))) {
+    try {
+      param_client->set_parameters({
+        rclcpp::Parameter("FollowPath.max_vel_x", 0.2)
+      });
+      RCLCPP_INFO(this->get_logger(),
+        "Successfully reduced Nav2 speed parameter to 0.2 m/s");
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(this->get_logger(),
+        "Failed to set Nav2 parameter: %s", e.what());
+    }
+  } else {
+    RCLCPP_ERROR(this->get_logger(),
+      "Nav2 controller_server not available for parameter update.");
+  }
+
+  // --- Trigger PlanSys2 replan ---
+  // auto replan_client = this->create_client<std_srvs::srv::Trigger>(
+  //     "/executor/replan_for_execution");
+  // auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+
+  // if (replan_client->wait_for_service(std::chrono::seconds(2))) {
+  //   replan_client->async_send_request(request);
+  //   RCLCPP_INFO(this->get_logger(), "Requested PlanSys2 replan.");
+  // } else {
+  //   RCLCPP_ERROR(this->get_logger(),
+  //     "Could not contact PlanSys2 replan service.");
+  // }
+}
+
+
+void NavigationController::evaluatePlanFeasibility()
+{
+  predicted_cost_ = computePredictedCost();
+
+  if ((battery_level_ - predicted_cost_) < safety_margin_) {
+    triggerProactiveAdaptation();
+  } else {
+    RCLCPP_INFO(this->get_logger(),
+      "Feasible: Battery %.1f%% | Predicted Cost %.1f%% | Margin %.1f%%",
+      battery_level_, predicted_cost_, safety_margin_);
+  }
+}
+
 
 void NavigationController::execute_plan()
 {

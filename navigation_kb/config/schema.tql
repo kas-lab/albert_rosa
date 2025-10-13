@@ -131,6 +131,12 @@ energy-cost sub relation,
 corridor plays energy-cost:corridor;
 configuration plays energy-cost:configuration;
 
+# Robot-measure linkage (for battery and similar metrics)
+measured_as sub relation,
+    relates robot,
+    relates measure;
+robot plays measured_as:robot;
+measure plays measured_as:measure;
 
 # # Robot telemetry linkage
 # measured_as sub relation,

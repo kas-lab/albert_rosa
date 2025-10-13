@@ -23,8 +23,13 @@
 #include "plansys2_planner/PlannerClient.hpp"
 #include "plansys2_problem_expert/ProblemExpertClient.hpp"
 #include "plansys2_pddl_parser/Utils.hpp"
+#include "sensor_msgs/msg/battery_state.hpp"
 
 #include "rosa_task_plan_plansys/rosa_plansys_controller.hpp"
+#include "std_srvs/srv/trigger.hpp"
+#include <chrono>
+using namespace std::chrono_literals;
+
 
 
 namespace navigation_task_plan
@@ -61,12 +66,29 @@ protected:
 
   void fetch_waypoints();
   void fetch_corridors();
+  // --- Proactive Adaptation ---
+  double battery_level_ = 100.0;
+  double predicted_cost_ = 0.0;
+  double safety_margin_ = 10.0;
+
+  rclcpp::TimerBase::SharedPtr proactive_timer_;
+  rclcpp::Subscription<sensor_msgs::msg::BatteryState>::SharedPtr battery_sub_;
+
   void fetch_configurations();
   void fetch_config_traits();
   void fetch_lighting_conditions();
   void fetch_energy_costs();
   void fetch_battery_and_feasibility();
   void fetch_goal();
+  // === Proactive adaptation functions ===
+  void start_proactive_monitoring();
+  void batteryCallback(const sensor_msgs::msg::BatteryState::SharedPtr msg);
+  void evaluatePlanFeasibility();
+  void triggerProactiveAdaptation();
+  double computePredictedCost();
+  double get_predicted_cost_from_kb();
+  double get_battery_level_from_kb();
+
 };
 
 }  // namespace navigation_task_plan

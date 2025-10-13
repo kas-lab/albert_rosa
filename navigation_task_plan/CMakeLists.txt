@@ -13,6 +13,8 @@ find_package(plansys2_executor REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(rosa_task_plan_plansys REQUIRED)
 find_package(ros_typedb_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+
 # uncomment the following section in order to fill in
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
@@ -20,6 +22,7 @@ find_package(ros_typedb_msgs REQUIRED)
 set(dependencies
   ament_cmake
   nav2_msgs
+  sensor_msgs
   rclcpp
   plansys2_executor
   geometry_msgs

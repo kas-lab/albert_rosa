@@ -14,6 +14,8 @@
   <build_depend>plansys2_domain_expert</build_depend>
   <build_depend>plansys2_problem_expert</build_depend>
   <build_depend>geometry_msgs</build_depend>
+  <build_depend>sensor_msgs</build_depend>
+
   <build_depend>rosa_task_plan_plansys</build_depend>
   <build_depend>ros_typedb_msgs</build_depend>
 
