@@ -1,63 +1,145 @@
 insert
 
-# === Actions and Functions ===
-$a_move_dark isa Action, has action-name "move_dark";
-$f_controller_dark isa Function, has function-name "controller_dark";
-(action: $a_move_dark, required-function: $f_controller_dark) isa functional-requirement;
+# === QUALITY ATTRIBUTE: Battery Level ===
+$battery_level_qa isa QualityAttribute, 
+  has measure-name "battery-level",
+  has description "Battery charge percentage";
 
-$a_move_lit isa Action, has action-name "move_lit";
-$f_controller_lit isa Function, has function-name "controller_lit";
-(action: $a_move_lit, required-function: $f_controller_lit) isa functional-requirement;
+# Initial battery measurement
+(measured-attribute: $battery_level_qa) isa measurement,
+  has measurement-value 100.0,
+  has latest true;
 
-# === Components and their function designs ===
-$c_controller_server isa LifeCycleNode,
+# === ACTIONS ===
+$a_move_lit isa Action, 
+  has action-name "move_lit";
+
+$a_move_dark isa Action, 
+  has action-name "move_dark";
+
+# === FUNCTIONS ===
+$f_controller_lit isa Function, 
+  has function-name "controller_lit",
+  has always-improve true;  # ✅ Enables continuous adaptation
+
+$f_controller_dark isa Function, 
+  has function-name "controller_dark",
+  has always-improve true;  # ✅ Enables continuous adaptation
+
+# === FUNCTIONAL REQUIREMENTS ===
+(action: $a_move_lit, required-function: $f_controller_lit) 
+  isa functional-requirement;
+
+(action: $a_move_dark, required-function: $f_controller_dark) 
+  isa functional-requirement;
+
+# === COMPONENT: Nav2 Controller Server ===
+$c_controller_server isa Component,
   has component-name "controller_server",
-  has package "nav2_controller",
-  has executable "controller_server";
+  has is-active true,        # Already running
+  has always-improve true;   # ✅ Enables continuous adaptation
 
-# Each function maps to the same component design
-(function: $f_controller_dark, required-component: $c_controller_server)
+# === FUNCTION DESIGNS ===
+$fd_lit (function: $f_controller_lit, required-component: $c_controller_server)
   isa function-design,
-  has function-design-name "fd_controller_server_dark";
+  has function-design-name "fd_controller_lit",
+  has is-selected true,      # ✅ Initially selected
+  has priority 1.0;
 
-(function: $f_controller_lit, required-component: $c_controller_server)
+$fd_dark (function: $f_controller_dark, required-component: $c_controller_server)
   isa function-design,
-  has function-design-name "fd_controller_server_lit";
+  has function-design-name "fd_controller_dark",
+  has is-selected true,      # ✅ Initially selected
+  has priority 1.0;
 
-# === Parameters ===
+# === COMPONENT PARAMETERS ===
+# High-speed configuration
 $cp_max_vel_x_high isa ComponentParameter,
   has parameter-key "FollowPath.max_vel_x",
-  has parameter-value "1.6",
-  has parameter-type "double";
-$cp_max_vel_x_low isa ComponentParameter,
-  has parameter-key "FollowPath.max_vel_x",
-  has parameter-value "1.2",
+  has parameter-value "2.5",
   has parameter-type "double";
 
 $cp_max_vel_theta_high isa ComponentParameter,
   has parameter-key "FollowPath.max_vel_theta",
-  has parameter-value "1.00",
+  has parameter-value "1.0",
   has parameter-type "double";
+
+# Low-speed configuration
+$cp_max_vel_x_low isa ComponentParameter,
+  has parameter-key "FollowPath.max_vel_x",
+  has parameter-value "0.6",
+  has parameter-type "double";
+
 $cp_max_vel_theta_low isa ComponentParameter,
   has parameter-key "FollowPath.max_vel_theta",
-  has parameter-value "0.80",
+  has parameter-value "0.6",
   has parameter-type "double";
 
-# === Configurations ===
-$c_controller_config_high_speed (component: $c_controller_server, parameter: $cp_max_vel_x_high, parameter: $cp_max_vel_theta_high)
+# === COMPONENT CONFIGURATIONS ===
+$cc_high_speed (component: $c_controller_server,
+                parameter: $cp_max_vel_x_high,
+                parameter: $cp_max_vel_theta_high)
   isa component-configuration,
-  has component-configuration-name "high speed",
-  has priority 1.0;
+  has component-configuration-name "high_speed_config",
+  has is-selected true,      # ✅ Initially selected (current config)
+  has priority 1.0;          # Lower number = higher preference
 
-$c_controller_config_low_speed (component: $c_controller_server, parameter: $cp_max_vel_x_low, parameter: $cp_max_vel_theta_low)
+$cc_low_speed (component: $c_controller_server,
+               parameter: $cp_max_vel_x_low,
+               parameter: $cp_max_vel_theta_low)
   isa component-configuration,
-  has component-configuration-name "low speed",
-  has priority 2.0;
+  has component-configuration-name "low_speed_config",
+  has is-selected false,     # ✅ Not initially selected
+  has priority 2.0;          # Higher number = fallback option
 
-# === Quality Attributes ===
-$qa_battery isa QualityAttribute, has measure-name "battery";
-
-(constraint: $qa_battery, constrained: $c_controller_config_high_speed)
-  isa constraint,
-  has attribute-value 0.75,
+# === CONSTRAINTS (Battery Thresholds) ===
+# High-speed requires battery >= 40%
+(constraint: $battery_level_qa, constrained: $cc_high_speed) 
+  isa constraint, 
+  has attribute-value 40.0,
   has constraint-operator ">=";
+
+# Low-speed requires battery >= 10%
+(constraint: $battery_level_qa, constrained: $cc_low_speed) 
+  isa constraint, 
+  has attribute-value 10.0,
+  has constraint-operator ">=";
+
+# === WAYPOINTS & CORRIDORS ===
+$wp0 isa waypoint, has waypoint-name "wp_0";
+$wp1 isa waypoint, has waypoint-name "wp_1";
+$wp2 isa waypoint, has waypoint-name "wp_2";
+$wp3 isa waypoint, has waypoint-name "wp_3";
+$wp4 isa waypoint, has waypoint-name "wp_4";
+
+$c01 (from: $wp0, to: $wp1) isa corridor;
+$c02 (from: $wp0, to: $wp2) isa corridor;
+$c13 (from: $wp1, to: $wp3) isa corridor;
+$c23 (from: $wp2, to: $wp3) isa corridor;
+$c34 (from: $wp3, to: $wp4) isa corridor;
+
+# === LIGHTING CONDITIONS ===
+$light01 (from: $wp0, to: $wp1) isa lighting-condition, 
+  has is-lit true, has is-dark false;
+
+$light02 (from: $wp0, to: $wp2) isa lighting-condition, 
+  has is-lit false, has is-dark true;
+
+$light13 (from: $wp1, to: $wp3) isa lighting-condition, 
+  has is-lit true, has is-dark false;
+
+$light23 (from: $wp2, to: $wp3) isa lighting-condition, 
+  has is-lit true, has is-dark false;
+
+$light34 (from: $wp3, to: $wp4) isa lighting-condition, 
+  has is-lit false, has is-dark true;
+
+# === ENERGY COSTS ===
+$c01_cost (corridor: $c01) isa energy-cost, has value 20.0;
+$c02_cost (corridor: $c02) isa energy-cost, has value 20.0;
+$c13_cost (corridor: $c13) isa energy-cost, has value 10.0;
+$c23_cost (corridor: $c23) isa energy-cost, has value 9.0;
+$c34_cost (corridor: $c34) isa energy-cost, has value 10.0;
+
+# === GOAL ===
+$goal1 isa goal, has goal-name "wp_4";
