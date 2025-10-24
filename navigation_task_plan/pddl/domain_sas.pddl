@@ -14,18 +14,18 @@
     (config-valid ?c - configuration)
     (can-traverse ?from ?to - waypoint ?c - configuration)
     (has-enough-battery ?from ?to - waypoint ?c - configuration)
-
-    ;; Properties
-    (uses-lidar ?c - configuration)
-    (uses-high-speed ?c - configuration)
-    (uses-low-speed ?c - configuration)
   )
 
   (:functions
     (battery-level)
     (energy-cost ?from - waypoint ?to - waypoint ?c - configuration)
   )
-  
+
+  ;; ─────────────────────────────────────────────────────────────
+  ;; ACTION: move_lit — uses configurations suitable for lit corridors
+  ;; These configurations will later be selected semantically
+  ;; by ROSA (based on feasibility and constraints).
+  ;; ─────────────────────────────────────────────────────────────
   (:action move_lit
     :parameters (?from ?to - waypoint ?c - configuration)
     :precondition (and
@@ -44,13 +44,17 @@
     )
   )
 
+  ;; ─────────────────────────────────────────────────────────────
+  ;; ACTION: move_dark — uses configurations suitable for dark corridors
+  ;; ROSA will decide which configuration (e.g., low_speed_config)
+  ;; is feasible under current battery and constraint context.
+  ;; ─────────────────────────────────────────────────────────────
   (:action move_dark
     :parameters (?from ?to - waypoint ?c - configuration)
     :precondition (and
       (at ?from)
       (is-corridor ?from ?to)
       (is-dark ?from ?to)
-      (uses-lidar ?c)
       (can-use ?c)
       (config-valid ?c)
       (can-traverse ?from ?to ?c)
