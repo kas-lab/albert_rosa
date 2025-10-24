@@ -22,13 +22,18 @@ class BatteryMonitor(Node):
 
      
         delete_query = (
-            'match $m isa measure, has measure-name "battery-level", has $v; '
-            'delete $m has $v;'
+            'match '
+            '$m (measured-attribute:$b) isa measurement; '
+            '$b isa QualityAttribute, has measure-name "battery-level"; '
+            'delete $m isa measurement;'
         )
 
-      
         insert_query = (
-            f'insert $m isa measure, has measure-name "battery-level", has value {percentage};'
+            f'match '
+            f'$b isa QualityAttribute, has measure-name "battery-level"; '
+            f'insert (measured-attribute:$b) isa measurement, '
+            f'has measurement-value {percentage}, '
+            f'has latest true;'
         )
 
 
