@@ -43,6 +43,7 @@ private:
   std::vector<std::string> getFeasibleConfigsFromKB();
 
   // Current applied configuration (updated on successful adaptation)
+  rclcpp::TimerBase::SharedPtr initial_config_timer_;
   std::string current_config_ = "high_speed_config";
 
 protected:
@@ -108,6 +109,7 @@ protected:
   void evaluatePlanFeasibility();
 
   // Proactive layer (future prediction + replan)
+  void updatePredictedBatteryInKB(double predicted_level);
   void evaluateFutureFeasibility();
   void triggerReplan();
 
@@ -119,6 +121,16 @@ protected:
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr rosa_event_pub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr rosa_reconfig_sub_;
   bool adaptation_triggered_ = false;
+  bool task_adaptation_triggered_ = false;  // ← ADD THIS
+  void triggerGoalModification();
+  std::string findNearestReachableGoal(const std::string &current_wp);
+  double calculatePathCost(const std::string &from_wp, const std::string &to_wp);
+  std::string getCurrentConfigFromKB();
+  void updateGoalInKB(const std::string &new_goal);
+  void setSystemModeInKB(double mode);
+  std::vector<std::string> getAvailableConfigsFromKB();
+
+  void selectConfigurationInKB(const std::string &config_name);
 };
 
 }  // namespace navigation_task_plan

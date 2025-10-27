@@ -47,6 +47,7 @@ NavigationController::NavigationController(const std::string & node_name)
       if (msg->data == "reconfiguration_completed") {
         adaptation_triggered_ = false;  // Reset flag
         RCLCPP_INFO(get_logger(), "✅ ROSA reconfiguration completed");
+        triggerReplan();
       }
     });
 
@@ -67,6 +68,20 @@ NavigationController::NavigationController(const std::string & node_name)
         5s, std::bind(&NavigationController::evaluateFutureFeasibility, this));
     RCLCPP_INFO(get_logger(), "Proactive reasoning ENABLED");
   }
+
+  //  // ✅ ADD THIS: Trigger initial configuration application
+  // initial_config_timer_ = this->create_wall_timer(
+  //   3s,  // Wait 3 seconds for ROSA and Nav2 to be ready
+  //   [this]() {
+  //     RCLCPP_INFO(get_logger(), "🚀 Applying initial high_speed_config via ROSA");
+      
+  //     auto msg = std::make_unique<std_msgs::msg::String>();
+  //     msg->data = "insert_monitoring_data";
+  //     rosa_event_pub_->publish(std::move(msg));
+      
+  //     // Cancel this timer after first trigger (only run once)
+  //     initial_config_timer_->cancel();
+  //   });
 
   RCLCPP_INFO(get_logger(), "NavigationController initialized.");
 }
@@ -461,7 +476,8 @@ void NavigationController::triggerProactiveAdaptation(const std::string &reason)
 
 void NavigationController::triggerReplan()
 {
-  RCLCPP_WARN(get_logger(), "Triggering proactive replan due to predicted infeasibility...");
+  RCLCPP_WARN(get_logger(), "Triggering proactive replan due to updated configuration...");
+  executor_client_->cancel_plan_execution();
 
   build_problem_from_kb();
 
@@ -470,14 +486,14 @@ void NavigationController::triggerReplan()
   auto plan    = planner_client_->getPlan(domain, problem);
 
   if (!plan.has_value()) {
-    RCLCPP_ERROR(get_logger(), "No new plan found during replan attempt.");
+    RCLCPP_ERROR(get_logger(), "No valid plan found after adaptation.");
     return;
   }
 
-  executor_client_->cancel_plan_execution();
   executor_client_->start_plan_execution(plan.value());
-  RCLCPP_INFO(get_logger(), "New plan generated and execution restarted.");
+  RCLCPP_INFO(get_logger(), "🔁 Plan successfully regenerated and execution restarted.");
 }
+
 
 // -----------------------------------------------------------------------------
 // Reactive check
@@ -541,6 +557,35 @@ NavigationController::parse_action(const std::string &action)
 // -----------------------------------------------------------------------------
 // Proactive check
 // -----------------------------------------------------------------------------
+void NavigationController::updatePredictedBatteryInKB(double predicted_level)
+{
+  // Delete old predicted battery measurement
+  auto del_req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+  del_req->query_type = "delete";
+  del_req->query = 
+    "match $m (measured-attribute:$b) isa measurement; "
+    "$b isa QualityAttribute, has measure-name 'predicted-battery-level'; "
+    "delete $m isa measurement;";
+  
+  auto del_fut = typedb_query_cli_->async_send_request(del_req);
+  
+  // Wait briefly for deletion
+  if (del_fut.wait_for(300ms) == std::future_status::ready) {
+    // Insert new predicted battery measurement
+    auto ins_req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+    ins_req->query_type = "insert";
+    ins_req->query = 
+      "match $b isa QualityAttribute, has measure-name 'predicted-battery-level'; "
+      "insert (measured-attribute:$b) isa measurement, "
+      "has measurement-value " + std::to_string(predicted_level) + ", "
+      "has latest true;";
+    
+    typedb_query_cli_->async_send_request(ins_req);
+    
+    RCLCPP_INFO(get_logger(), 
+      "✅ Updated predicted battery in KB: %.2f%%", predicted_level);
+  }
+}
 void NavigationController::evaluateFutureFeasibility()
 {
   battery_level_ = getBatteryFromKB();
@@ -605,44 +650,193 @@ void NavigationController::evaluateFutureFeasibility()
   }
 
   double remaining = battery_level_ - total_predicted_cost;
+  updatePredictedBatteryInKB(remaining);
+  // // ✅ KEEP YOUR MONITORING LOGIC - just change the trigger
+  // if (remaining < safety_margin_) {
+  //   // Guard to prevent repeated triggers
+  //   if (!adaptation_triggered_) {  // ← Add this flag
+  //     RCLCPP_WARN(get_logger(),
+  //       "[🚨 PROACTIVE REASONING TRIGGERED]\n"
+  //       "  Current battery: %.2f%%\n"
+  //       "  Predicted cost: %.2f%%\n"
+  //       "  Battery after plan: %.2f%%\n"
+  //       "  Safety margin: %.2f%%\n"
+  //       "  → Triggering ROSA adaptation",
+  //       battery_level_, total_predicted_cost, remaining, safety_margin_);
 
-  // ✅ KEEP YOUR MONITORING LOGIC - just change the trigger
-  if (remaining < safety_margin_) {
-    // Guard to prevent repeated triggers
-    if (!adaptation_triggered_) {  // ← Add this flag
-      RCLCPP_WARN(get_logger(),
-        "[🚨 PROACTIVE REASONING TRIGGERED]\n"
-        "  Current battery: %.2f%%\n"
-        "  Predicted cost: %.2f%%\n"
-        "  Battery after plan: %.2f%%\n"
-        "  Safety margin: %.2f%%\n"
-        "  → Triggering ROSA adaptation",
-        battery_level_, total_predicted_cost, remaining, safety_margin_);
-
-      // ❌ OLD: triggerProactiveAdaptation("low_speed_config");
-      // ✅ NEW: Publish event for ROSA
-      auto msg = std::make_unique<std_msgs::msg::String>();
-      msg->data = "insert_monitoring_data";
-      rosa_event_pub_->publish(std::move(msg));
+  //     // ❌ OLD: triggerProactiveAdaptation("low_speed_config");
+  //     // ✅ NEW: Publish event for ROSA
+  //     auto msg = std::make_unique<std_msgs::msg::String>();
+  //     msg->data = "insert_monitoring_data";
+  //     rosa_event_pub_->publish(std::move(msg));
       
-      adaptation_triggered_ = true;  // Prevent re-triggering
-      RCLCPP_INFO(get_logger(), "✅ Adaptation event published to ROSA");
+  //     adaptation_triggered_ = true;  // Prevent re-triggering
+  //     RCLCPP_INFO(get_logger(), "✅ Adaptation event published to ROSA");
       
-    } else {
-      RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 10000,
-        "⏳ Adaptation already triggered, waiting for ROSA...");
-    }
-  } else {
-    // ✅ Reset flag when we're back to feasible
-    adaptation_triggered_ = false;
+  //   } else {
+  //     RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 10000,
+  //       "⏳ Adaptation already triggered, waiting for ROSA...");
+  //   }
+  // } else {
+  //   // ✅ Reset flag when we're back to feasible
+  //   adaptation_triggered_ = false;
     
-    RCLCPP_INFO(get_logger(),
-      "[✓ Proactive Check] Plan FEASIBLE\n"
-      "  Battery after plan: %.2f%% (margin: %.2f%%)",
-      remaining, remaining - safety_margin_);
+  //   RCLCPP_INFO(get_logger(),
+  //     "[✓ Proactive Check] Plan FEASIBLE\n"
+  //     "  Battery after plan: %.2f%% (margin: %.2f%%)",
+  //     remaining, remaining - safety_margin_);
+  // }
+}
+void NavigationController::triggerGoalModification()
+{
+  RCLCPP_ERROR(get_logger(), "🔄 [TASK ADAPTATION] Reducing goal scope!");
+  
+  // Find current position
+  auto feedback = executor_client_->getFeedBack();
+  std::string current_wp = "wp_0";
+  
+  for (const auto &ae : feedback.action_execution_status) {
+    if (ae.status == plansys2_msgs::msg::ActionExecutionInfo::SUCCEEDED) {
+      auto [from, to, cfg] = parse_action(ae.action);
+      if (!to.empty()) {
+        current_wp = to;
+      }
+    }
   }
+  
+  // Calculate reachable goal
+  std::string new_goal = findNearestReachableGoal(current_wp);
+  
+  RCLCPP_WARN(get_logger(), "🎯 New goal: %s (reduced from wp_10)", new_goal.c_str());
+  
+  // ✅ Update goal in Problem Expert
+  problem_expert_->setGoal(plansys2::Goal("(and (at " + new_goal + "))"));
+  
+  // Also update KB for consistency
+  updateGoalInKB(new_goal);
+  
+  // ✅ Get new plan with updated problem
+  auto domain = domain_expert_->getDomain();
+  auto problem = problem_expert_->getProblem();
+  auto plan = planner_client_->getPlan(domain, problem);
+  
+  if (!plan.has_value()) {
+    RCLCPP_ERROR(get_logger(), "❌ No plan with reduced goal!");
+    finish_controlling();
+    return;
+  }
+  
+  RCLCPP_INFO(get_logger(), "✅ New plan: %zu actions to %s", 
+    plan->items.size(), new_goal.c_str());
+  
+  // ✅ Send new plan (triggers seamless replan internally!)
+  executor_client_->start_plan_execution(plan.value());
+  
+  RCLCPP_INFO(get_logger(), "🚀 SEAMLESS REPLAN! Robot continues WITHOUT stopping!");
 }
 
+std::string NavigationController::findNearestReachableGoal(const std::string &current_wp)
+{
+  // Extract waypoint number: "wp_5" → 5
+  int current_num = std::stoi(current_wp.substr(3));
+  
+  // Calculate available battery (minus safety margin)
+  double available_battery = battery_level_ - safety_margin_;
+  
+  RCLCPP_INFO(get_logger(), 
+    "🧮 Calculating reachable goal from %s with %.2f%% available battery",
+    current_wp.c_str(), available_battery);
+  
+  // ✅ Try each waypoint from current to wp_10, check if reachable
+  std::string best_reachable_goal;
+  
+  for (int target_num = 10; target_num > current_num; target_num--) {
+    std::string candidate_goal = "wp_" + std::to_string(target_num);
+    
+    // Calculate actual cost from current position to candidate goal
+    double total_cost = calculatePathCost(current_wp, candidate_goal);
+    
+    if (total_cost < 0) {
+      // Cost not found in map, skip
+      continue;
+    }
+    
+    RCLCPP_DEBUG(get_logger(), 
+      "  Checking %s: cost=%.2f, available=%.2f",
+      candidate_goal.c_str(), total_cost, available_battery);
+    
+    // Check if we have enough battery to reach this goal
+    if (total_cost <= available_battery) {
+      best_reachable_goal = candidate_goal;
+      RCLCPP_INFO(get_logger(), 
+        "✅ Found reachable goal: %s (cost=%.2f%%, available=%.2f%%)",
+        candidate_goal.c_str(), total_cost, available_battery);
+      break;  // Found furthest reachable goal
+    }
+  }
+  
+  if (best_reachable_goal.empty()) {
+    RCLCPP_ERROR(get_logger(), "❌ No reachable goal found from %s!", current_wp.c_str());
+  }
+  
+  return best_reachable_goal;
+}
+
+double NavigationController::calculatePathCost(
+  const std::string &from_wp, 
+  const std::string &to_wp)
+{
+  // Extract waypoint numbers
+  int from_num = std::stoi(from_wp.substr(3));
+  int to_num = std::stoi(to_wp.substr(3));
+  
+  if (from_num >= to_num) {
+    return -1.0;  // Invalid path
+  }
+  
+  double total_cost = 0.0;
+  
+  // Sum costs of all corridors from 'from' to 'to'
+  for (int i = from_num; i < to_num; i++) {
+    std::string start = "wp_" + std::to_string(i);
+    std::string end = "wp_" + std::to_string(i + 1);
+    
+    // Use low_speed_config since we're in task adaptation phase
+    auto key = std::make_tuple(start, end, "low_speed_config");
+    
+    if (cost_map_.count(key)) {
+      total_cost += cost_map_[key];
+    } else {
+      RCLCPP_WARN(get_logger(), 
+        "Cost not found for %s→%s (low_speed)", start.c_str(), end.c_str());
+      return -1.0;  // Cost not available
+    }
+  }
+  
+  return total_cost;
+}
+
+void NavigationController::updateGoalInKB(const std::string &new_goal)
+{
+  // Delete old goal
+  auto del_req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+  del_req->query_type = "delete";
+  del_req->query = "match $g isa goal; delete $g isa goal;";
+  
+  auto del_fut = typedb_query_cli_->async_send_request(del_req);
+  
+  if (del_fut.wait_for(500ms) == std::future_status::ready) {
+    // Insert new goal
+    auto ins_req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+    ins_req->query_type = "insert";
+    ins_req->query = 
+      "insert $g isa goal, has goal-name '" + new_goal + "';";
+    
+    typedb_query_cli_->async_send_request(ins_req);
+    
+    RCLCPP_INFO(get_logger(), "✅ Goal updated in KB: %s", new_goal.c_str());
+  }
+}
 // -----------------------------------------------------------------------------
 // PlanSys2 execution loop
 // -----------------------------------------------------------------------------
@@ -669,11 +863,19 @@ void NavigationController::execute_plan()
   current_plan_actions_.clear();
   
   RCLCPP_INFO(get_logger(), "\n=== GENERATED PLAN ===");
+  
+  std::string first_config;  // ✅ NEW: Extract first action's config
+  
   for (size_t i = 0; i < plan->items.size(); i++) {
     const auto &item = plan->items[i];
     RCLCPP_INFO(get_logger(), "[%zu] Action: '%s'", i, item.action.c_str());
     
     auto [from, to, cfg] = parse_action(item.action);
+    
+    // ✅ NEW: Capture first config
+    if (i == 0 && !cfg.empty()) {
+      first_config = cfg;
+    }
     
     if (!from.empty() && !to.empty() && !cfg.empty()) {
       std::stringstream ss(item.action);
@@ -705,11 +907,21 @@ void NavigationController::execute_plan()
     }
   }
   
-  // ✅ FIX: Update current_config_ to match the plan!
-  if (!current_plan_actions_.empty()) {
-    current_config_ = current_plan_actions_[0].config;
+  // ✅ FIX: Update current_config_ and tell ROSA to use it!
+  if (!current_plan_actions_.empty() && !first_config.empty()) {
+    current_config_ = first_config;
     RCLCPP_INFO(get_logger(), 
       "📌 Plan uses configuration: '%s'", current_config_.c_str());
+
+    
+    // ✅ NEW: Trigger ROSA to apply the configuration
+    RCLCPP_INFO(get_logger(), "🔄 Triggering ROSA to apply '%s'", first_config.c_str());
+    auto msg = std::make_unique<std_msgs::msg::String>();
+    msg->data = "insert_monitoring_data";
+    rosa_event_pub_->publish(std::move(msg));
+    
+    // Wait for ROSA to reconfigure
+    std::this_thread::sleep_for(std::chrono::seconds(2));
   }
   
   RCLCPP_INFO(get_logger(), "======================\n");
