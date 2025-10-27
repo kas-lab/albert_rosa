@@ -10,6 +10,10 @@ $battery_level_qa isa QualityAttribute,
   has measurement-value 100.0,
   has latest true;
 
+$predicted_battery_qa isa QualityAttribute,
+  has measure-name "predicted-battery-level",
+  has description "Predicted battery level after current plan completion";
+
 # === ACTIONS ===
 $a_move_lit isa Action, 
   has action-name "move_lit";
@@ -56,7 +60,7 @@ $fd_dark (function: $f_controller_dark, required-component: $c_controller_server
 # High-speed configuration
 $cp_max_vel_x_high isa ComponentParameter,
   has parameter-key "FollowPath.max_vel_x",
-  has parameter-value "2.5",
+  has parameter-value "2.0",
   has parameter-type "double";
 
 $cp_max_vel_theta_high isa ComponentParameter,
@@ -81,6 +85,7 @@ $cc_high_speed (component: $c_controller_server,
                 parameter: $cp_max_vel_theta_high)
   isa component-configuration,
   has component-configuration-name "high_speed_config",
+  has component-configuration-status "feasible",
   has is-selected true,      # ✅ Initially selected (current config)
   has priority 1.0;          # Lower number = higher preference
 
@@ -89,20 +94,19 @@ $cc_low_speed (component: $c_controller_server,
                parameter: $cp_max_vel_theta_low)
   isa component-configuration,
   has component-configuration-name "low_speed_config",
+  has component-configuration-status "feasible",
   has is-selected false,     # ✅ Not initially selected
   has priority 2.0;          # Higher number = fallback option
 
-# === CONSTRAINTS (Battery Thresholds) ===
-# High-speed requires battery >= 40%
-(constraint: $battery_level_qa, constrained: $cc_high_speed) 
-  isa constraint, 
-  has attribute-value 40.0,
+# === PROACTIVE CONSTRAINTS (based on prediction) ===
+(constraint: $predicted_battery_qa, constrained: $cc_high_speed)
+  isa constraint,
+  has attribute-value 30.0,  # requires at least 10% remaining margin
   has constraint-operator ">=";
 
-# Low-speed requires battery >= 10%
-(constraint: $battery_level_qa, constrained: $cc_low_speed) 
-  isa constraint, 
-  has attribute-value 10.0,
+(constraint: $predicted_battery_qa, constrained: $cc_low_speed)
+  isa constraint,
+  has attribute-value 10.0,   # valid even if predicted battery is near depletion
   has constraint-operator ">=";
 
 # === WAYPOINTS & CORRIDORS ===
@@ -111,35 +115,48 @@ $wp1 isa waypoint, has waypoint-name "wp_1";
 $wp2 isa waypoint, has waypoint-name "wp_2";
 $wp3 isa waypoint, has waypoint-name "wp_3";
 $wp4 isa waypoint, has waypoint-name "wp_4";
+$wp5 isa waypoint, has waypoint-name "wp_5";
+$wp6 isa waypoint, has waypoint-name "wp_6";
+$wp7 isa waypoint, has waypoint-name "wp_7";
+$wp8 isa waypoint, has waypoint-name "wp_8";
+$wp9 isa waypoint, has waypoint-name "wp_9";
+$wp10 isa waypoint, has waypoint-name "wp_10";
 
-$c01 (from: $wp0, to: $wp1) isa corridor;
-$c02 (from: $wp0, to: $wp2) isa corridor;
-$c13 (from: $wp1, to: $wp3) isa corridor;
-$c23 (from: $wp2, to: $wp3) isa corridor;
-$c34 (from: $wp3, to: $wp4) isa corridor;
+# === CORRIDORS (circular connectivity) ===
+$c01  (from: $wp0, to: $wp1)  isa corridor;
+$c12  (from: $wp1, to: $wp2)  isa corridor;
+$c23  (from: $wp2, to: $wp3)  isa corridor;
+$c34  (from: $wp3, to: $wp4)  isa corridor;
+$c45  (from: $wp4, to: $wp5)  isa corridor;
+$c56  (from: $wp5, to: $wp6)  isa corridor;
+$c67  (from: $wp6, to: $wp7)  isa corridor;
+$c78  (from: $wp7, to: $wp8)  isa corridor;
+$c89  (from: $wp8, to: $wp9)  isa corridor;
+$c910 (from: $wp9, to: $wp10) isa corridor;
 
-# === LIGHTING CONDITIONS ===
-$light01 (from: $wp0, to: $wp1) isa lighting-condition, 
-  has is-lit true, has is-dark false;
+# === LIGHTING CONDITIONS (alternate lit/dark) ===
+$light01  (from: $wp0,  to: $wp1)   isa lighting-condition, has is-lit true, has is-dark false;
+$light12  (from: $wp1,  to: $wp2)   isa lighting-condition, has is-lit true, has is-dark false;
+$light23  (from: $wp2,  to: $wp3)   isa lighting-condition, has is-lit true, has is-dark false;
+$light34  (from: $wp3,  to: $wp4)   isa lighting-condition, has is-lit true, has is-dark false;
+$light45  (from: $wp4,  to: $wp5)   isa lighting-condition, has is-lit true, has is-dark false;
+$light56  (from: $wp5,  to: $wp6)   isa lighting-condition, has is-lit true, has is-dark false;
+$light67  (from: $wp6,  to: $wp7)   isa lighting-condition, has is-lit true, has is-dark false;
+$light78  (from: $wp7,  to: $wp8)   isa lighting-condition, has is-lit true, has is-dark false;
+$light89  (from: $wp8,  to: $wp9)   isa lighting-condition, has is-lit true, has is-dark false;
+$light910 (from: $wp9,  to: $wp10)  isa lighting-condition, has is-lit true, has is-dark false;
 
-$light02 (from: $wp0, to: $wp2) isa lighting-condition, 
-  has is-lit false, has is-dark true;
-
-$light13 (from: $wp1, to: $wp3) isa lighting-condition, 
-  has is-lit true, has is-dark false;
-
-$light23 (from: $wp2, to: $wp3) isa lighting-condition, 
-  has is-lit true, has is-dark false;
-
-$light34 (from: $wp3, to: $wp4) isa lighting-condition, 
-  has is-lit false, has is-dark true;
-
-# === ENERGY COSTS ===
-$c01_cost (corridor: $c01) isa energy-cost, has value 20.0;
-$c02_cost (corridor: $c02) isa energy-cost, has value 20.0;
-$c13_cost (corridor: $c13) isa energy-cost, has value 10.0;
-$c23_cost (corridor: $c23) isa energy-cost, has value 9.0;
-$c34_cost (corridor: $c34) isa energy-cost, has value 10.0;
+# === ENERGY COSTS (slightly varied; total loop ≈ 100%) ===
+$c01_cost   (corridor: $c01)   isa energy-cost, has value 10.0;
+$c12_cost   (corridor: $c12)   isa energy-cost, has value 9.0;
+$c23_cost   (corridor: $c23)   isa energy-cost, has value 9.0;
+$c34_cost   (corridor: $c34)   isa energy-cost, has value 8.0;
+$c45_cost   (corridor: $c45)   isa energy-cost, has value 8.0;
+$c56_cost   (corridor: $c56)   isa energy-cost, has value 9.0;
+$c67_cost   (corridor: $c67)   isa energy-cost, has value 6.0;
+$c78_cost   (corridor: $c78)   isa energy-cost, has value 6.0;
+$c89_cost   (corridor: $c89)   isa energy-cost, has value 10.0;
+$c910_cost  (corridor: $c910)  isa energy-cost, has value 10.0;
 
 # === GOAL ===
-$goal1 isa goal, has goal-name "wp_4";
+$goal1 isa goal, has goal-name "wp_10";

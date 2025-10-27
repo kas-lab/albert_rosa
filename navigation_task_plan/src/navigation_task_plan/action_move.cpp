@@ -41,6 +41,13 @@ public:
     this->declare_parameter("wp_2", rclcpp::PARAMETER_DOUBLE_ARRAY);
     this->declare_parameter("wp_3", rclcpp::PARAMETER_DOUBLE_ARRAY);
     this->declare_parameter("wp_4", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_5", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_6", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_7", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_8", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_9", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_10", rclcpp::PARAMETER_DOUBLE_ARRAY);
+
 
     return plansys2::ActionExecutorClient::on_configure(previous_state);
   }
