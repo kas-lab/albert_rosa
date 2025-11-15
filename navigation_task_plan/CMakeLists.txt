@@ -14,6 +14,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(rosa_task_plan_plansys REQUIRED)
 find_package(ros_typedb_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(diagnostic_msgs REQUIRED) 
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -28,6 +29,7 @@ set(dependencies
   geometry_msgs
   rosa_task_plan_plansys
   ros_typedb_msgs
+  diagnostic_msgs
 )
 
 include_directories(
@@ -37,12 +39,16 @@ include_directories(
 add_executable(action_move src/navigation_task_plan/action_move.cpp)
 ament_target_dependencies(action_move ${dependencies})
 
+add_executable(action_recharge src/action_recharge.cpp)
+ament_target_dependencies(action_recharge ${dependencies})
+
 add_executable(navigate src/navigate.cpp)
 ament_target_dependencies(navigate ${dependencies})
 
 install(TARGETS
   navigate
   action_move
+  action_recharge
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY include/

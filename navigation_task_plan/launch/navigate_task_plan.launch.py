@@ -36,12 +36,10 @@ def generate_launch_description():
         }.items()
     )
 
-    waypoint_file = os.path.join(navigation_task_plan_path, 'config', 'waypoints.yaml')
-
     navigation_controller_node = Node(
         package='navigation_task_plan',
         executable='navigate',
-        parameters=[{'rosa_actions': ['move_dark', 'move_lit']}]
+        parameters=[{'rosa_actions': ['move_dark', 'move_lit', 'recharge']}],
     )
 
     pddl_move_action_node_dark = Node(
@@ -64,11 +62,21 @@ def generate_launch_description():
         ]
     )
 
+    # ✅ Correctly defined and included
+    action_recharge_node = Node(
+        package='navigation_task_plan',
+        executable='action_recharge',
+        name='action_recharge',
+        output='screen',
+        parameters=[{'action_name': 'recharge'}]
+    )
+
+    
 
     return LaunchDescription([
         plansys2_bringup,
         navigation_controller_node,
         pddl_move_action_node_dark,
-        pddl_move_action_node_lit
+        pddl_move_action_node_lit,
+        action_recharge_node,  # <-- now properly launched
     ])
-

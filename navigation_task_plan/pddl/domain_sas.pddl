@@ -1,10 +1,10 @@
 (define (domain albert)
   (:requirements :typing :negative-preconditions :equality :fluents)
-
   (:types
-    waypoint configuration
+    waypoint
+    configuration
+    action
   )
-
   (:predicates
     (at ?w - waypoint)
     (is-corridor ?from ?to - waypoint)
@@ -14,56 +14,105 @@
     (config-valid ?c - configuration)
     (can-traverse ?from ?to - waypoint ?c - configuration)
     (has-enough-battery ?from ?to - waypoint ?c - configuration)
+    (has-charging-station ?w - waypoint)
+    
+    ;; ROSA–PlanSys2 predicates
+    (move_lit_action ?a - action)
+    (move_dark_action ?a - action)
+    (move_to_recharge_action ?a - action)  ; ✅ NEW
+    (recharge_action ?a - action)
+    (action_feasible ?a - action)
+    (battery_recharged ?w - waypoint)
   )
-
   (:functions
     (battery-level)
     (energy-cost ?from - waypoint ?to - waypoint ?c - configuration)
   )
 
-  ;; ─────────────────────────────────────────────────────────────
-  ;; ACTION: move_lit — uses configurations suitable for lit corridors
-  ;; These configurations will later be selected semantically
-  ;; by ROSA (based on feasibility and constraints).
-  ;; ─────────────────────────────────────────────────────────────
-  (:action move_lit
-    :parameters (?from ?to - waypoint ?c - configuration)
-    :precondition (and
-      (at ?from)
-      (is-corridor ?from ?to)
-      (is-lit ?from ?to)
-      (can-use ?c)
-      (config-valid ?c)
-      (can-traverse ?from ?to ?c)
-      (has-enough-battery ?from ?to ?c)
+  ;; ═══════════════════════════════════════════════
+  ;; EXISTING ACTIONS (unchanged)
+  ;; ═══════════════════════════════════════════════
+  (:durative-action move_lit
+    :parameters (?a - action ?from ?to - waypoint ?c - configuration)
+    :duration (= ?duration 1)
+    :condition (and
+      (at start (at ?from))
+      (at start (is-corridor ?from ?to))
+      (at start (is-lit ?from ?to))
+      (at start (can-use ?c))
+      (at start (config-valid ?c))
+      (at start (can-traverse ?from ?to ?c))
+      (at start (has-enough-battery ?from ?to ?c))
+      (at start (move_lit_action ?a))
+      (at start (action_feasible ?a))
     )
     :effect (and
-      (not (at ?from))
-      (at ?to)
-      (decrease (battery-level) (energy-cost ?from ?to ?c))
+      (at end (not (at ?from)))
+      (at end (at ?to))
+      (at end (decrease (battery-level) (energy-cost ?from ?to ?c)))
     )
   )
 
-  ;; ─────────────────────────────────────────────────────────────
-  ;; ACTION: move_dark — uses configurations suitable for dark corridors
-  ;; ROSA will decide which configuration (e.g., low_speed_config)
-  ;; is feasible under current battery and constraint context.
-  ;; ─────────────────────────────────────────────────────────────
-  (:action move_dark
-    :parameters (?from ?to - waypoint ?c - configuration)
-    :precondition (and
-      (at ?from)
-      (is-corridor ?from ?to)
-      (is-dark ?from ?to)
-      (can-use ?c)
-      (config-valid ?c)
-      (can-traverse ?from ?to ?c)
-      (has-enough-battery ?from ?to ?c)
+  (:durative-action move_dark
+    :parameters (?a - action ?from ?to - waypoint ?c - configuration)
+    :duration (= ?duration 1)
+    :condition (and
+      (at start (at ?from))
+      (at start (is-corridor ?from ?to))
+      (at start (is-dark ?from ?to))
+      (at start (can-use ?c))
+      (at start (config-valid ?c))
+      (at start (can-traverse ?from ?to ?c))
+      (at start (has-enough-battery ?from ?to ?c))
+      (at start (move_dark_action ?a))
+      (at start (action_feasible ?a))
     )
     :effect (and
-      (not (at ?from))
-      (at ?to)
-      (decrease (battery-level) (energy-cost ?from ?to ?c))
+      (at end (not (at ?from)))
+      (at end (at ?to))
+      (at end (decrease (battery-level) (energy-cost ?from ?to ?c)))
+    )
+  )
+
+  ;; ═══════════════════════════════════════════════
+  ;; NEW: Emergency move to charging station
+  ;; Uses degraded_speed_config (slowest, minimal power)
+  ;; ═══════════════════════════════════════════════
+  (:durative-action move_to_recharge
+    :parameters (?a - action ?from ?to - waypoint ?c - configuration)
+    :duration (= ?duration 1)
+    :condition (and
+      (at start (at ?from))
+      (at start (is-corridor ?from ?to))
+      (at start (has-charging-station ?to))  ; ✅ MUST go to charger
+      (at start (can-use ?c))
+      (at start (config-valid ?c))
+      (at start (can-traverse ?from ?to ?c))
+      (at start (move_to_recharge_action ?a))
+      (at start (action_feasible ?a))
+    )
+    :effect (and
+      (at end (not (at ?from)))
+      (at end (at ?to))
+      (at end (decrease (battery-level) (energy-cost ?from ?to ?c)))
+    )
+  )
+
+  ;; ═══════════════════════════════════════════════
+  ;; RECHARGE (unchanged)
+  ;; ═══════════════════════════════════════════════
+  (:durative-action recharge
+    :parameters (?a - action ?charging - waypoint)
+    :duration (= ?duration 1)
+    :condition (and
+      (at start (at ?charging))
+      (at start (has-charging-station ?charging))
+      (at start (recharge_action ?a))
+      (at start (action_feasible ?a))
+    )
+    :effect (and
+      (at end (battery_recharged ?charging)) 
+      (at end (increase (battery-level) 40))
     )
   )
 )
