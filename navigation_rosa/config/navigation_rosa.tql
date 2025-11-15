@@ -21,14 +21,28 @@ $a_move_lit isa Action,
 $a_move_dark isa Action, 
   has action-name "move_dark";
 
+$a_recharge isa Action,
+  has action-name "recharge";
+
+# === Battery constraints on move actions ===
+(constraint: $predicted_battery_qa, constrained: $a_move_lit)
+  isa constraint,
+  has attribute-value 5.0,
+  has constraint-operator ">=";
+
+(constraint: $predicted_battery_qa, constrained: $a_move_dark)
+  isa constraint,
+  has attribute-value 5.0,
+  has constraint-operator ">=";
+
 # === FUNCTIONS ===
 $f_controller_lit isa Function, 
   has function-name "controller_lit",
-  has always-improve true;  # ✅ Enables continuous adaptation
+  has always-improve true;
 
 $f_controller_dark isa Function, 
   has function-name "controller_dark",
-  has always-improve true;  # ✅ Enables continuous adaptation
+  has always-improve true;
 
 # === FUNCTIONAL REQUIREMENTS ===
 (action: $a_move_lit, required-function: $f_controller_lit) 
@@ -40,20 +54,20 @@ $f_controller_dark isa Function,
 # === COMPONENT: Nav2 Controller Server ===
 $c_controller_server isa Component,
   has component-name "controller_server",
-  has is-active true,        # Already running
-  has always-improve true;   # ✅ Enables continuous adaptation
+  has is-active true,
+  has always-improve true;
 
 # === FUNCTION DESIGNS ===
 $fd_lit (function: $f_controller_lit, required-component: $c_controller_server)
   isa function-design,
   has function-design-name "fd_controller_lit",
-  has is-selected true,      # ✅ Initially selected
+  has is-selected true,
   has priority 1.0;
 
 $fd_dark (function: $f_controller_dark, required-component: $c_controller_server)
   isa function-design,
   has function-design-name "fd_controller_dark",
-  has is-selected true,      # ✅ Initially selected
+  has is-selected true,
   has priority 1.0;
 
 # === COMPONENT PARAMETERS ===
@@ -86,8 +100,8 @@ $cc_high_speed (component: $c_controller_server,
   isa component-configuration,
   has component-configuration-name "high_speed_config",
   has component-configuration-status "feasible",
-  has is-selected true,      # ✅ Initially selected (current config)
-  has priority 1.0;          # Lower number = higher preference
+  has is-selected true,
+  has priority 1.0;
 
 $cc_low_speed (component: $c_controller_server,
                parameter: $cp_max_vel_x_low,
@@ -95,46 +109,46 @@ $cc_low_speed (component: $c_controller_server,
   isa component-configuration,
   has component-configuration-name "low_speed_config",
   has component-configuration-status "feasible",
-  has is-selected false,     # ✅ Not initially selected
-  has priority 2.0;          # Higher number = fallback option
+  has is-selected false,
+  has priority 2.0;
 
 # === PROACTIVE CONSTRAINTS (based on prediction) ===
 (constraint: $predicted_battery_qa, constrained: $cc_high_speed)
   isa constraint,
-  has attribute-value 30.0,  # requires at least 10% remaining margin
+  has attribute-value 20.0,
   has constraint-operator ">=";
 
 (constraint: $predicted_battery_qa, constrained: $cc_low_speed)
   isa constraint,
-  has attribute-value 10.0,   # valid even if predicted battery is near depletion
+  has attribute-value 5.0,
   has constraint-operator ">=";
 
-# === WAYPOINTS & CORRIDORS ===
+# === WAYPOINTS ===
 $wp0 isa waypoint, has waypoint-name "wp_0";
-$wp1 isa waypoint, has waypoint-name "wp_1";
+$wp1 isa waypoint, has waypoint-name "wp_1", has has-charging-station true;  # ✅ Charging
 $wp2 isa waypoint, has waypoint-name "wp_2";
-$wp3 isa waypoint, has waypoint-name "wp_3";
+$wp3 isa waypoint, has waypoint-name "wp_3", has has-charging-station true;  # ✅ Charging
 $wp4 isa waypoint, has waypoint-name "wp_4";
-$wp5 isa waypoint, has waypoint-name "wp_5";
+$wp5 isa waypoint, has waypoint-name "wp_5", has has-charging-station true;  # ✅ Charging
 $wp6 isa waypoint, has waypoint-name "wp_6";
-$wp7 isa waypoint, has waypoint-name "wp_7";
+$wp7 isa waypoint, has waypoint-name "wp_7", has has-charging-station true;  # ✅ Charging
 $wp8 isa waypoint, has waypoint-name "wp_8";
-$wp9 isa waypoint, has waypoint-name "wp_9";
+$wp9 isa waypoint, has waypoint-name "wp_9", has has-charging-station true;  # ✅ Charging
 $wp10 isa waypoint, has waypoint-name "wp_10";
 
-# === CORRIDORS (circular connectivity) ===
-$c01  (from: $wp0, to: $wp1)  isa corridor;
-$c12  (from: $wp1, to: $wp2)  isa corridor;
-$c23  (from: $wp2, to: $wp3)  isa corridor;
-$c34  (from: $wp3, to: $wp4)  isa corridor;
-$c45  (from: $wp4, to: $wp5)  isa corridor;
-$c56  (from: $wp5, to: $wp6)  isa corridor;
-$c67  (from: $wp6, to: $wp7)  isa corridor;
-$c78  (from: $wp7, to: $wp8)  isa corridor;
-$c89  (from: $wp8, to: $wp9)  isa corridor;
-$c910 (from: $wp9, to: $wp10) isa corridor;
+# === CORRIDORS ===
+$c01  (from: $wp0, to: $wp1)  isa corridor, has distance 2.5;   # ✅ Distance in meters
+$c12  (from: $wp1, to: $wp2)  isa corridor, has distance 2.2;
+$c23  (from: $wp2, to: $wp3)  isa corridor, has distance 2.3;
+$c34  (from: $wp3, to: $wp4)  isa corridor, has distance 2.0;
+$c45  (from: $wp4, to: $wp5)  isa corridor, has distance 2.0;
+$c56  (from: $wp5, to: $wp6)  isa corridor, has distance 2.2;
+$c67  (from: $wp6, to: $wp7)  isa corridor, has distance 1.5;
+$c78  (from: $wp7, to: $wp8)  isa corridor, has distance 1.5;
+$c89  (from: $wp8, to: $wp9)  isa corridor, has distance 2.5;
+$c910 (from: $wp9, to: $wp10) isa corridor, has distance 2.5;
 
-# === LIGHTING CONDITIONS (alternate lit/dark) ===
+# === LIGHTING CONDITIONS ===
 $light01  (from: $wp0,  to: $wp1)   isa lighting-condition, has is-lit true, has is-dark false;
 $light12  (from: $wp1,  to: $wp2)   isa lighting-condition, has is-lit true, has is-dark false;
 $light23  (from: $wp2,  to: $wp3)   isa lighting-condition, has is-lit true, has is-dark false;
@@ -145,18 +159,6 @@ $light67  (from: $wp6,  to: $wp7)   isa lighting-condition, has is-lit true, has
 $light78  (from: $wp7,  to: $wp8)   isa lighting-condition, has is-lit true, has is-dark false;
 $light89  (from: $wp8,  to: $wp9)   isa lighting-condition, has is-lit true, has is-dark false;
 $light910 (from: $wp9,  to: $wp10)  isa lighting-condition, has is-lit true, has is-dark false;
-
-# === ENERGY COSTS (slightly varied; total loop ≈ 100%) ===
-$c01_cost   (corridor: $c01)   isa energy-cost, has value 10.0;
-$c12_cost   (corridor: $c12)   isa energy-cost, has value 9.0;
-$c23_cost   (corridor: $c23)   isa energy-cost, has value 9.0;
-$c34_cost   (corridor: $c34)   isa energy-cost, has value 8.0;
-$c45_cost   (corridor: $c45)   isa energy-cost, has value 8.0;
-$c56_cost   (corridor: $c56)   isa energy-cost, has value 9.0;
-$c67_cost   (corridor: $c67)   isa energy-cost, has value 6.0;
-$c78_cost   (corridor: $c78)   isa energy-cost, has value 6.0;
-$c89_cost   (corridor: $c89)   isa energy-cost, has value 10.0;
-$c910_cost  (corridor: $c910)  isa energy-cost, has value 10.0;
 
 # === GOAL ===
 $goal1 isa goal, has goal-name "wp_10";
