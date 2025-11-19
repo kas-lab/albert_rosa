@@ -61,6 +61,7 @@
 
     // === Goal management ===
     std::string current_goal_ = "navigation";
+    std::string findNearestCharger(const std::string &from_wp);
 
     // === Helper declarations for step() ===
     void checkBatteryPrediction();
@@ -157,6 +158,7 @@
 
     // Architectural adaptation helper
     void triggerProactiveAdaptation(const std::string & target_cfg);
+    void updatePlanCostsIfConfigChanged(); 
 
     // (Optional) simple example function kept for reference
     double computePredictedCost();

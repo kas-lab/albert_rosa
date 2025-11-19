@@ -84,7 +84,6 @@
     :condition (and
       (at start (at ?from))
       (at start (is-corridor ?from ?to))
-      (at start (has-charging-station ?to))  ; ✅ MUST go to charger
       (at start (can-use ?c))
       (at start (config-valid ?c))
       (at start (can-traverse ?from ?to ?c))
