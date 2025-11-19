@@ -39,7 +39,7 @@ def generate_launch_description():
     navigation_controller_node = Node(
         package='navigation_task_plan',
         executable='navigate',
-        parameters=[{'rosa_actions': ['move_dark', 'move_lit', 'recharge']}],
+        parameters=[{'rosa_actions': ['move_dark', 'move_lit', 'recharge', 'move_to_recharge']}], 
     )
 
     pddl_move_action_node_dark = Node(
@@ -62,7 +62,16 @@ def generate_launch_description():
         ]
     )
 
-    # ✅ Correctly defined and included
+    move_to_recharge_node = Node(  
+        package='navigation_task_plan',
+        executable='action_move',
+        name='action_move_to_recharge',  
+        parameters=[
+            os.path.join(navigation_task_plan_path, 'config', 'waypoints_to_recharge.yaml'),
+            {'action_name': 'move_to_recharge'}  
+        ]
+    )
+
     action_recharge_node = Node(
         package='navigation_task_plan',
         executable='action_recharge',
@@ -78,5 +87,6 @@ def generate_launch_description():
         navigation_controller_node,
         pddl_move_action_node_dark,
         pddl_move_action_node_lit,
-        action_recharge_node,  # <-- now properly launched
+        action_recharge_node,  
+        move_to_recharge_node,
     ])
