@@ -1,4 +1,5 @@
 // Copyright 2025
+// FIXED VERSION - No segfault on timer cleanup!
 #include "geometry_msgs/msg/pose.hpp"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "nav2_msgs/action/navigate_to_pose.hpp"
@@ -17,25 +18,42 @@ class MoveAction : public rosa_task_plan_plansys::RosaAction {
 public:
   MoveAction(const std::string & node_name,
              const std::chrono::nanoseconds & rate)
-    : RosaAction(node_name, rate) {}
+    : rosa_task_plan_plansys::RosaAction(node_name, rate) {}
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
   on_configure(const rclcpp_lifecycle::State & previous_state)
   {
-    callback_group_action_client_ = create_callback_group(
-      rclcpp::CallbackGroupType::MutuallyExclusive);
+    // ✅ Declare fake_execution parameter
+    this->declare_parameter("fake_execution", false);
+    fake_execution_ = this->get_parameter("fake_execution").as_bool();
+    
+    // ✅ Declare fake execution duration (how long to simulate)
+    this->declare_parameter("fake_execution_duration_ms", 1000);
+    fake_duration_ms_ = this->get_parameter("fake_execution_duration_ms").as_int();
+    
+    if (fake_execution_) {
+      RCLCPP_INFO(get_logger(), "🎭 Fake execution enabled (duration: %dms)", fake_duration_ms_);
+    } else {
+      RCLCPP_INFO(get_logger(), "🚀 Real execution enabled (using Nav2)");
+    }
+    
+    // Only create action client if NOT fake execution
+    if (!fake_execution_) {
+      callback_group_action_client_ = create_callback_group(
+        rclcpp::CallbackGroupType::MutuallyExclusive);
 
-    navigate_cli_ = rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(
-      this,
-      "navigate_to_pose",
-      callback_group_action_client_);
+      navigate_cli_ = rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(
+        this,
+        "navigate_to_pose",
+        callback_group_action_client_);
 
-    pos_sub_ = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
-      "/amcl_pose",
-      10,
-      std::bind(&MoveAction::current_pos_callback, this, _1));
+      pos_sub_ = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+        "/amcl_pose",
+        10,
+        std::bind(&MoveAction::current_pos_callback, this, _1));
+    }
 
-    // Declare waypoint parameters (they come from your YAML file)
+    // Declare waypoint parameters
     this->declare_parameter("wp_0", rclcpp::PARAMETER_DOUBLE_ARRAY);
     this->declare_parameter("wp_1", rclcpp::PARAMETER_DOUBLE_ARRAY);
     this->declare_parameter("wp_2", rclcpp::PARAMETER_DOUBLE_ARRAY);
@@ -47,7 +65,6 @@ public:
     this->declare_parameter("wp_8", rclcpp::PARAMETER_DOUBLE_ARRAY);
     this->declare_parameter("wp_9", rclcpp::PARAMETER_DOUBLE_ARRAY);
     this->declare_parameter("wp_10", rclcpp::PARAMETER_DOUBLE_ARRAY);
-
 
     return plansys2::ActionExecutorClient::on_configure(previous_state);
   }
@@ -85,17 +102,39 @@ public:
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
   on_activate(const rclcpp_lifecycle::State & previous_state)
   {
+    // Reset fake timer state
+    fake_timer_fired_ = false;
+    
     return rosa_task_plan_plansys::RosaAction::on_activate(previous_state);
   }
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
   on_deactivate(const rclcpp_lifecycle::State & previous_state)
   {
-    navigate_cli_->async_cancel_all_goals();
+    // ✅ FIXED: Safely cleanup timer
+    if (fake_timer_) {
+      fake_timer_->cancel();
+      fake_timer_.reset();
+      fake_timer_fired_ = false;
+    }
+    
+    // Only cancel Nav2 goals if we have a real navigation client
+    if (!fake_execution_ && navigate_cli_) {
+      navigate_cli_->async_cancel_all_goals();
+    }
+    
     return rosa_task_plan_plansys::RosaAction::on_deactivate(previous_state);
   }
 
 private:
+  // ✅ Fake execution state
+  bool fake_execution_ = false;
+  int fake_duration_ms_ = 1000;
+  rclcpp::TimerBase::SharedPtr fake_timer_;
+  std::string current_goal_wp_;
+  bool fake_timer_fired_ = false;  // ✅ FIXED: Prevent multiple firings
+  
+  // Real Nav2 state
   geometry_msgs::msg::Pose current_pos_;
   rclcpp::CallbackGroup::SharedPtr callback_group_action_client_;
   rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SharedPtr navigate_cli_;
@@ -115,14 +154,50 @@ private:
   void send_nav_goal()
   {
     send_feedback(0.0, "Move starting");
-
+    
+    std::string goal_wp = get_arguments()[1];
+    current_goal_wp_ = goal_wp;
+    
+    // ✅ FAKE EXECUTION PATH (ASYNCHRONOUS like Nav2!)
+    if (fake_execution_) {
+      RCLCPP_INFO(get_logger(), "🎭 Fake execution: Starting move to %s (will complete in %dms)", 
+        goal_wp.c_str(), fake_duration_ms_);
+      
+      // Reset fired flag
+      fake_timer_fired_ = false;
+      
+      // Create timer that fires repeatedly but only execute once
+      fake_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(fake_duration_ms_),
+        [this]() {
+          // ✅ FIXED: Check if already fired (prevents double execution)
+          if (fake_timer_fired_) {
+            return;  // Already completed, ignore subsequent firings
+          }
+          fake_timer_fired_ = true;
+          
+          // This callback fires after the duration (like Nav2's result_callback)
+          RCLCPP_INFO(get_logger(), "🎭 Fake execution: Completed move to %s", 
+            current_goal_wp_.c_str());
+          
+          send_feedback(1.0, "Move completed (fake)");
+          finish(true, 1.0, "Move completed (fake execution)");
+          nav_goal_sent_ = false;
+          
+          // ✅ FIXED: DON'T cancel from inside callback!
+          // Timer will be canceled in on_deactivate() instead
+        }
+      );
+      
+      // ✅ Return immediately - action is now RUNNING (just like Nav2!)
+      return;
+    }
+    
+    // ✅ REAL EXECUTION PATH (original Nav2 code)
     while (!navigate_cli_->wait_for_action_server(5s)) {
       RCLCPP_INFO(get_logger(), "Waiting for navigation action server...");
     }
     RCLCPP_INFO(get_logger(), "Navigation action server ready");
-
-    // Take destination waypoint from arguments
-    std::string goal_wp = get_arguments()[1];
 
     nav2_msgs::action::NavigateToPose::Goal navigation_goal;
     navigation_goal.pose = get_waypoint(goal_wp);

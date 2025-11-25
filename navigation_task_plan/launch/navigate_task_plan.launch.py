@@ -12,19 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
-
 from ament_index_python.packages import get_package_share_directory
-
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 
-
 def generate_launch_description():
     navigation_task_plan_path = get_package_share_directory('navigation_task_plan')
     plansys_path = get_package_share_directory('plansys2_bringup')
-
+    
     plansys2_bringup = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             plansys_path,
@@ -35,43 +32,46 @@ def generate_launch_description():
             'problem_file': navigation_task_plan_path + '/pddl/problem_sas.pddl',
         }.items()
     )
-
+    
     navigation_controller_node = Node(
         package='navigation_task_plan',
         executable='navigate',
         parameters=[{'rosa_actions': ['move_dark', 'move_lit', 'recharge', 'move_to_recharge']}], 
     )
-
+    
     pddl_move_action_node_dark = Node(
         package='navigation_task_plan',
         executable='action_move',
         name='action_move_dark',
         parameters=[
             os.path.join(navigation_task_plan_path, 'config', 'waypoints_dark.yaml'),
-            {'action_name': 'move_dark'}
+            {'action_name': 'move_dark'},
+            {'fake_execution': True}  
         ]
     )
-
+    
     pddl_move_action_node_lit = Node(
         package='navigation_task_plan',
         executable='action_move',
         name='action_move_lit',
         parameters=[
             os.path.join(navigation_task_plan_path, 'config', 'waypoints_lit.yaml'),
-            {'action_name': 'move_lit'}
+            {'action_name': 'move_lit'},
+            {'fake_execution': True}  
         ]
     )
-
+    
     move_to_recharge_node = Node(  
         package='navigation_task_plan',
         executable='action_move',
         name='action_move_to_recharge',  
         parameters=[
             os.path.join(navigation_task_plan_path, 'config', 'waypoints_to_recharge.yaml'),
-            {'action_name': 'move_to_recharge'}  
+            {'action_name': 'move_to_recharge'},
+            {'fake_execution': True}  
         ]
     )
-
+    
     action_recharge_node = Node(
         package='navigation_task_plan',
         executable='action_recharge',
@@ -79,9 +79,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{'action_name': 'recharge'}]
     )
-
     
-
     return LaunchDescription([
         plansys2_bringup,
         navigation_controller_node,
