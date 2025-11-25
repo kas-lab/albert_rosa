@@ -50,6 +50,8 @@
     ~NavigationController() override;
 
   private:
+
+    
     // --- KB helpers ---
     std::vector<std::string> getFeasibleConfigsFromKB();
 
@@ -186,6 +188,7 @@
     // ──────────────── NEW: resume + cost calc support ────────────────
     // Read current wp from executor feedback (used when switching/restarting plans)
     std::string getCurrentWaypointFromFeedback();
+    std::string getClosestWaypointInCorridor(const std::string& wp_a, const std::string& wp_b);  
 
     // Update KB fact (at <wp>) after recharge / switches
     void updateCurrentWaypointInKB(const std::string &wp);
@@ -195,12 +198,15 @@
 
     // Map for corridor energy costs and current plan action cache
     std::map<std::tuple<std::string, std::string, std::string>, double> cost_map_;
-  
-    // ✅ ADD THESE TWO LINES:
+
     std::map<std::pair<std::string, std::string>, double> distance_map_;
     void fetch_corridor_distances();
     void fetch_charging_stations();
-    
+    void updateSafetyContext();
+  
+
+    double queryCorridorWidth(const std::string& from_wp, const std::string& to_wp);
+    void publishCorridorSafety(const std::string& from_wp, const std::string& to_wp);
     
   };
 
