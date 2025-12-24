@@ -5,6 +5,9 @@ $battery_level_qa isa QualityAttribute,
   has measure-name "battery-level",
   has description "Battery charge percentage";
 
+$corridor_width_qa isa QualityAttribute,
+  has measure-name "current-corridor-width",
+  has description "Width of corridor being traversed (meters)";
 # Initial battery measurement
 (measured-attribute: $battery_level_qa) isa measurement,
   has measurement-value 100.0,
@@ -58,6 +61,21 @@ $c_arm isa Component,
   has attribute-value 5.0,
   has constraint-operator ">=";
 
+
+# === Component activation constraints ===
+# Perception deactivates when battery critical
+(constraint: $predicted_battery_qa, constrained: $c_perception)
+  isa constraint,
+  has attribute-value 25.0,
+  has constraint-operator ">=";
+
+# Arm reduces to low power when battery critical  
+(constraint: $predicted_battery_qa, constrained: $c_arm)
+  isa constraint,
+  has attribute-value 30.0,
+  has constraint-operator ">=";
+
+
 # === FUNCTIONS ===
 $f_controller_lit isa Function, 
   has function-name "controller_lit",
@@ -108,23 +126,23 @@ $cp_max_vel_theta_high isa ComponentParameter,
 # === LOW SPEED CONFIGURATION ===
 $cp_max_vel_x_low isa ComponentParameter,
   has parameter-key "FollowPath.max_vel_x",
-  has parameter-value "0.6",
+  has parameter-value "1.6",
   has parameter-type "double";
 
 $cp_max_vel_theta_low isa ComponentParameter,
   has parameter-key "FollowPath.max_vel_theta",
-  has parameter-value "0.6",
+  has parameter-value "1.6",
   has parameter-type "double";
 
 # === DEGRADED SPEED CONFIGURATION ===
 $cp_max_vel_x_degraded isa ComponentParameter,
   has parameter-key "FollowPath.max_vel_x",
-  has parameter-value "0.3",
+  has parameter-value "1.2",
   has parameter-type "double";
 
 $cp_max_vel_theta_degraded isa ComponentParameter,
   has parameter-key "FollowPath.max_vel_theta",
-  has parameter-value "0.3",
+  has parameter-value "1.2",
   has parameter-type "double";
 
 # === COMPONENT CONFIGURATIONS ===
@@ -146,7 +164,7 @@ $cc_low_speed (component: $c_controller_server,
   has is-selected false,
   has priority 2.0;
 
-$cc_degraded (component: $c_controller_server,
+  $cc_degraded (component: $c_controller_server,
               parameter: $cp_max_vel_x_degraded,
               parameter: $cp_max_vel_theta_degraded)
   isa component-configuration,
@@ -158,59 +176,125 @@ $cc_degraded (component: $c_controller_server,
 # === PROACTIVE CONSTRAINTS (based on prediction) ===
 (constraint: $predicted_battery_qa, constrained: $a_move_to_recharge)
   isa constraint,
-  has attribute-value 10.0,  # Only use when predicted < 10%
+  has attribute-value 5.0,  # Only use when predicted < 10%
   has constraint-operator "<";
 
-# === HIGH-SPEED: Use when predicted >= 40% ===
+# === HIGH-SPEED: Use when predicted >= 50% ===
 (constraint: $predicted_battery_qa, constrained: $cc_high_speed)
   isa constraint,
-  has attribute-value 40.0,
+  has attribute-value 30.0,
   has constraint-operator ">=";
 
-# === LOW-SPEED: Use when 5% <= predicted < 20% ===
-# Lower bound: predicted >= 5%
+#=== LOW-SPEED: Use when 5% <= predicted < 20% ===
+# (constraint: $predicted_battery_qa, constrained: $cc_low_speed)
+#   isa constraint,
+#   has attribute-value 20.0,
+#   has constraint-operator "<";
+
 (constraint: $predicted_battery_qa, constrained: $cc_low_speed)
   isa constraint,
-  has attribute-value 5.0,
+  has attribute-value 15.0,
   has constraint-operator ">=";
 
-# Upper bound: predicted < 20% (if >= 40%, use high instead)
-(constraint: $predicted_battery_qa, constrained: $cc_low_speed)
-  isa constraint,
-  has attribute-value 20.0,
-  has constraint-operator "<";
-
-# === DEGRADED: Use when 3% <= predicted < 5% ===
+# === DEGRADED: < 8% ===
 
 (constraint: $predicted_battery_qa, constrained: $cc_degraded)
   isa constraint,
-  has attribute-value 5.0,
+  has attribute-value 10.0,
   has constraint-operator "<";
 
+
+# === Corridor Widh Constraints Safety Levels ===
+(constraint: $corridor_width_qa, constrained: $cc_high_speed)
+  isa constraint,
+  has attribute-value 1.4,
+  has constraint-operator ">=";
+
+(constraint: $corridor_width_qa, constrained: $cc_low_speed)
+  isa constraint,
+  has attribute-value 0.8,
+  has constraint-operator ">=";
+
+# (constraint: $corridor_width_qa, constrained: $cc_low_speed)
+#   isa constraint,
+#   has attribute-value 1.4,
+#   has constraint-operator "<=";
+
+
 # === WAYPOINTS ===
-$wp0 isa waypoint, has waypoint-name "wp_0";
-$wp1 isa waypoint, has waypoint-name "wp_1", has has-charging-station true;  # ✅ Charging
-$wp2 isa waypoint, has waypoint-name "wp_2";
-$wp3 isa waypoint, has waypoint-name "wp_3", has has-charging-station true;  # ✅ Charging
-$wp4 isa waypoint, has waypoint-name "wp_4";
-$wp5 isa waypoint, has waypoint-name "wp_5"; 
-$wp6 isa waypoint, has waypoint-name "wp_6";
-$wp7 isa waypoint, has waypoint-name "wp_7", has has-charging-station true;  # ✅ Charging
-$wp8 isa waypoint, has waypoint-name "wp_8";
-$wp9 isa waypoint, has waypoint-name "wp_9", has has-charging-station true;  # ✅ Charging
-$wp10 isa waypoint, has waypoint-name "wp_10";
+$wp0 isa waypoint, has waypoint-name "wp_0", has risk-level "safe";
+$wp1 isa waypoint, has waypoint-name "wp_1", has has-charging-station true, has risk-level "safe";
+$wp2 isa waypoint, has waypoint-name "wp_2", has risk-level "safe";
+$wp3 isa waypoint, has waypoint-name "wp_3", has has-charging-station true, has risk-level "moderate";
+$wp4 isa waypoint, has waypoint-name "wp_4", has risk-level "safe";
+$wp5 isa waypoint, has waypoint-name "wp_5", has risk-level "high";  # Narrow area
+$wp6 isa waypoint, has waypoint-name "wp_6", has risk-level "high";  # Congested area
+$wp7 isa waypoint, has waypoint-name "wp_7", has has-charging-station true, has risk-level "safe";
+$wp8 isa waypoint, has waypoint-name "wp_8", has risk-level "safe";
+$wp9 isa waypoint, has waypoint-name "wp_9", has has-charging-station true, has risk-level "safe";
+$wp10 isa waypoint, has waypoint-name "wp_10", has risk-level "safe";
 
 # === CORRIDORS ===
-$c01  (from: $wp0, to: $wp1)  isa corridor, has distance 2.5;   # ✅ Distance in meters
-$c12  (from: $wp1, to: $wp2)  isa corridor, has distance 2.2;
-$c23  (from: $wp2, to: $wp3)  isa corridor, has distance 2.3;
-$c34  (from: $wp3, to: $wp4)  isa corridor, has distance 2.0;
-$c45  (from: $wp4, to: $wp5)  isa corridor, has distance 2.0;
-$c56  (from: $wp5, to: $wp6)  isa corridor, has distance 2.2;
-$c67  (from: $wp6, to: $wp7)  isa corridor, has distance 1.5;
-$c78  (from: $wp7, to: $wp8)  isa corridor, has distance 1.5;
-$c89  (from: $wp8, to: $wp9)  isa corridor, has distance 2.5;
-$c910 (from: $wp9, to: $wp10) isa corridor, has distance 2.5;
+# === CORRIDORS WITH SAFETY DATA ===
+$c01 (from: $wp0, to: $wp1) isa corridor, 
+  has distance 2.5,
+  has corridor-width 1.8,      # ← Wide, safe corridor
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+$c12 (from: $wp1, to: $wp2) isa corridor, 
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+$c23 (from: $wp2, to: $wp3) isa corridor, 
+  has distance 2.5,
+  has corridor-width 1.8,      # ← Medium width
+  has obstacle-density "medium",
+  has max-safe-speed 1.5;
+
+$c34 (from: $wp3, to: $wp4) isa corridor, 
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 1.8;
+
+$c45 (from: $wp4, to: $wp5) isa corridor, 
+  has distance 2.5,
+  has corridor-width 0.9,      # ← NARROW! High-speed unsafe
+  has obstacle-density "high",
+  has max-safe-speed 0.8;
+
+$c56 (from: $wp5, to: $wp6) isa corridor, 
+  has distance 2.5,
+  has corridor-width 0.8,      # ← VERY NARROW! Only degraded mode
+  has obstacle-density "high",
+  has max-safe-speed 0.6;
+
+$c67 (from: $wp6, to: $wp7) isa corridor, 
+  has distance 2.5,
+  has corridor-width 1.7,      # ← Returning to normal
+  has obstacle-density "medium",
+  has max-safe-speed 1.0;
+
+$c78 (from: $wp7, to: $wp8) isa corridor, 
+  has distance 2.5,
+  has corridor-width 1.7,
+  has obstacle-density "low",
+  has max-safe-speed 1.5;
+
+$c89 (from: $wp8, to: $wp9) isa corridor, 
+  has distance 2.5,
+  has corridor-width 1.7,      # ← Wide again
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+$c910 (from: $wp9, to: $wp10) isa corridor, 
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
 
 # === LIGHTING CONDITIONS ===
 $light01  (from: $wp0,  to: $wp1)   isa lighting-condition, has is-lit true, has is-dark false;
@@ -225,4 +309,4 @@ $light89  (from: $wp8,  to: $wp9)   isa lighting-condition, has is-lit true, has
 $light910 (from: $wp9,  to: $wp10)  isa lighting-condition, has is-lit true, has is-dark false;
 
 # === GOAL ===
-$goal1 isa goal, has goal-name "wp_10";
+$goal1 isa goal, has goal-name "wp_30";
