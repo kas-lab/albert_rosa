@@ -14,6 +14,8 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
+from std_msgs.msg import Bool
+
 
 
 class BenchmarkMonitor(Node):
@@ -35,7 +37,12 @@ class BenchmarkMonitor(Node):
             self.battery_callback,
             10
         )
-        
+        self.recharge_sub = self.create_subscription(
+            Bool,
+            '/battery_monitor/recharge_complete',
+            self.recharge_complete_callback,
+            10
+        )
         # Subscribe to diagnostics for config changes
         # self.diagnostics_sub = self.create_subscription(
         #     DiagnosticArray,
@@ -107,6 +114,14 @@ class BenchmarkMonitor(Node):
             self.current_run['failed'] = True
             self.get_logger().error(
                 f'❌ Run {self.current_run["run_number"]}: Battery depleted!')
+            
+    def recharge_complete_callback(self, msg: Bool):
+        if msg.data:
+            self.current_run['recharge_count'] += 1
+            self.get_logger().info(
+                f"  ⚡ Recharge #{self.current_run['recharge_count']} (BatteryMonitor)"
+            )
+
     
     def monitoring_callback(self, msg: DiagnosticArray):
         """Track ROSA config changes and adaptations"""
