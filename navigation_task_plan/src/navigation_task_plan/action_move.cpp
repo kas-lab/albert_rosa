@@ -1,10 +1,11 @@
 // Copyright 2025
-// FIXED VERSION - No segfault on timer cleanup!
 #include "geometry_msgs/msg/pose.hpp"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "plansys2_executor/ActionExecutorClient.hpp"
 #include "rosa_task_plan_plansys/rosa_action.hpp"
+#include "std_msgs/msg/string.hpp"
+#include "ros_typedb_msgs/srv/query.hpp"
 
 using namespace std::chrono_literals;
 using namespace std::placeholders;
@@ -23,19 +24,29 @@ public:
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
   on_configure(const rclcpp_lifecycle::State & previous_state)
   {
-    // ✅ Declare fake_execution parameter
+    // Declare fake_execution parameter
     this->declare_parameter("fake_execution", false);
     fake_execution_ = this->get_parameter("fake_execution").as_bool();
     
-    // ✅ Declare fake execution duration (how long to simulate)
+    // Declare fake execution duration (how long to simulate)
     this->declare_parameter("fake_execution_duration_ms", 1000);
     fake_duration_ms_ = this->get_parameter("fake_execution_duration_ms").as_int();
+    this->declare_parameter("fake_time_per_meter", 1.0);
+    fake_time_per_meter_ = this->get_parameter("fake_time_per_meter").as_double();
     
     if (fake_execution_) {
-      RCLCPP_INFO(get_logger(), "🎭 Fake execution enabled (duration: %dms)", fake_duration_ms_);
+      RCLCPP_INFO(get_logger(), "🎭 Fake execution enabled");
     } else {
       RCLCPP_INFO(get_logger(), "🚀 Real execution enabled (using Nav2)");
     }
+    
+    // Create event publisher
+    move_event_pub_ = this->create_publisher<std_msgs::msg::String>(
+      "/action_events", 10);
+    
+    // Create TypeDB client
+    typedb_client_ = this->create_client<ros_typedb_msgs::srv::Query>(
+      "/rosa_kb/query");
     
     // Only create action client if NOT fake execution
     if (!fake_execution_) {
@@ -65,7 +76,37 @@ public:
     this->declare_parameter("wp_8", rclcpp::PARAMETER_DOUBLE_ARRAY);
     this->declare_parameter("wp_9", rclcpp::PARAMETER_DOUBLE_ARRAY);
     this->declare_parameter("wp_10", rclcpp::PARAMETER_DOUBLE_ARRAY);
-
+    this->declare_parameter("wp_11", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_12", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_13", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_14", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_15", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_16", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_17", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_18", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_19", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_20", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_21", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_22", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_23", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_24", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_25", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_26", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_27", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_28", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_29", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_30", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_31", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_32", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_33", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_34", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_35", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_36", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_37", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_38", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_39", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_40", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    
     return plansys2::ActionExecutorClient::on_configure(previous_state);
   }
 
@@ -80,6 +121,46 @@ public:
   {
     return hypot(pos1.position.x - pos2.position.x,
                  pos1.position.y - pos2.position.y);
+  }
+  
+  double getCorridorDistanceFromTypeDB(const std::string& from_wp, 
+                                       const std::string& to_wp)
+  {
+    auto req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+    req->query_type = "fetch";
+    req->query = 
+      "match "
+      "$c (from: $w1, to: $w2) isa corridor, has distance $d; "
+      "$w1 has waypoint-name '" + from_wp + "'; "
+      "$w2 has waypoint-name '" + to_wp + "'; "
+      "fetch $d;";
+    
+    if (!typedb_client_->wait_for_service(std::chrono::seconds(1))) {
+      RCLCPP_WARN(get_logger(), "TypeDB not available, using Euclidean distance");
+      return -1.0;
+    }
+    
+    auto future = typedb_client_->async_send_request(req);
+    
+    if (future.wait_for(std::chrono::milliseconds(500)) != std::future_status::ready) {
+      return -1.0;
+    }
+    
+    auto response = future.get();
+    
+    if (!response->success || response->results.empty()) {
+      return -1.0;
+    }
+    
+    for (const auto &row : response->results) {
+      for (const auto &attr : row.attributes) {
+        if (attr.name == "d") {
+          return attr.value.double_value;
+        }
+      }
+    }
+    
+    return -1.0;
   }
 
   geometry_msgs::msg::PoseStamped get_waypoint(const std::string & waypoint)
@@ -102,23 +183,20 @@ public:
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
   on_activate(const rclcpp_lifecycle::State & previous_state)
   {
-    // Reset fake timer state
     fake_timer_fired_ = false;
-    
     return rosa_task_plan_plansys::RosaAction::on_activate(previous_state);
   }
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
   on_deactivate(const rclcpp_lifecycle::State & previous_state)
   {
-    // ✅ FIXED: Safely cleanup timer
+    nav_goal_sent_ = false;
     if (fake_timer_) {
       fake_timer_->cancel();
       fake_timer_.reset();
       fake_timer_fired_ = false;
     }
     
-    // Only cancel Nav2 goals if we have a real navigation client
     if (!fake_execution_ && navigate_cli_) {
       navigate_cli_->async_cancel_all_goals();
     }
@@ -127,14 +205,16 @@ public:
   }
 
 private:
-  // ✅ Fake execution state
   bool fake_execution_ = false;
   int fake_duration_ms_ = 1000;
   rclcpp::TimerBase::SharedPtr fake_timer_;
   std::string current_goal_wp_;
-  bool fake_timer_fired_ = false;  // ✅ FIXED: Prevent multiple firings
+  bool fake_timer_fired_ = false;
+  double fake_time_per_meter_ = 1.0;
   
-  // Real Nav2 state
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr move_event_pub_;
+  rclcpp::Client<ros_typedb_msgs::srv::Query>::SharedPtr typedb_client_;
+  
   geometry_msgs::msg::Pose current_pos_;
   rclcpp::CallbackGroup::SharedPtr callback_group_action_client_;
   rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SharedPtr navigate_cli_;
@@ -158,42 +238,106 @@ private:
     std::string goal_wp = get_arguments()[1];
     current_goal_wp_ = goal_wp;
     
-    // ✅ FAKE EXECUTION PATH (ASYNCHRONOUS like Nav2!)
     if (fake_execution_) {
-      RCLCPP_INFO(get_logger(), "🎭 Fake execution: Starting move to %s (will complete in %dms)", 
-        goal_wp.c_str(), fake_duration_ms_);
-      
-      // Reset fired flag
-      fake_timer_fired_ = false;
-      
-      // Create timer that fires repeatedly but only execute once
-      fake_timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(fake_duration_ms_),
-        [this]() {
-          // ✅ FIXED: Check if already fired (prevents double execution)
-          if (fake_timer_fired_) {
-            return;  // Already completed, ignore subsequent firings
-          }
-          fake_timer_fired_ = true;
-          
-          // This callback fires after the duration (like Nav2's result_callback)
-          RCLCPP_INFO(get_logger(), "🎭 Fake execution: Completed move to %s", 
-            current_goal_wp_.c_str());
-          
-          send_feedback(1.0, "Move completed (fake)");
-          finish(true, 1.0, "Move completed (fake execution)");
-          nav_goal_sent_ = false;
-          
-          // ✅ FIXED: DON'T cancel from inside callback!
-          // Timer will be canceled in on_deactivate() instead
+      RCLCPP_INFO(get_logger(), "🎭 Fake execution enabled");
+
+      auto args = get_arguments();
+      std::string from_wp, to_wp, cfg;
+
+      if (args[0] == "move_to_recharge") {
+        if (args.size() >= 3) {
+            from_wp = args[1];  
+            to_wp = args[2];    
+            cfg = "low_speed_config";
+            
+            RCLCPP_INFO(get_logger(), 
+              "🔌 Recharge move: %s → %s", from_wp.c_str(), to_wp.c_str());
+        } else {
+            RCLCPP_ERROR(get_logger(),
+              "move_to_recharge needs at least 3 args, got %zu", args.size());
+            return;
         }
-      );
+    }
+      else if (args.size() >= 4 &&
+              (args[0] == "move_lit" || args[0] == "move_dark")) {
+          from_wp = args[1];
+          to_wp   = args[2];
+          cfg     = args[3];
+      }
+      else if (args.size() >= 3) {
+          from_wp = args[0];
+          to_wp   = args[1];
+          cfg     = args[2];
+      }
+      else {
+          RCLCPP_ERROR(get_logger(),
+              "Cannot parse action arguments for fake execution (args=%zu)", args.size());
+          return;
+      }
+
+      RCLCPP_INFO(get_logger(), "Fake move %s → %s (%s)",
+                  from_wp.c_str(), to_wp.c_str(), cfg.c_str());
+
+      // Try TypeDB first, fallback to Euclidean
+      double dist = 4.0;
       
-      // ✅ Return immediately - action is now RUNNING (just like Nav2!)
+
+      // Get config speed
+      double config_speed = 1.0;
+      if (cfg.find("high_speed") != std::string::npos) {
+        config_speed = 2.0;
+      } else if (cfg.find("low_speed") != std::string::npos) {
+        config_speed = 1.6;
+      } else if (cfg.find("degraded") != std::string::npos) {
+        config_speed = 1.2;
+      }
+      
+      double time_seconds = dist / config_speed;
+      int scaled_ms = static_cast<int>(time_seconds * 1000.0);
+      
+      RCLCPP_INFO(get_logger(), "Distance=%.2f m", dist);
+      RCLCPP_INFO(get_logger(), "Config speed=%.2f m/s → duration=%.2f sec",
+                  config_speed, time_seconds);
+      
+      // Publish START event
+      auto event_msg = std_msgs::msg::String();
+      event_msg.data = "MOVE_START|" + from_wp + "|" + to_wp + "|" + cfg + 
+                       "|" + std::to_string(dist);
+      move_event_pub_->publish(event_msg);
+      
+      fake_timer_fired_ = false;
+      fake_timer_ = this->create_wall_timer(
+      std::chrono::milliseconds(scaled_ms),
+      [this, from_wp, to_wp, cfg, dist]() {
+        
+        // ✅ Simple check: if timer already fired, ignore
+        if (fake_timer_fired_) {
+          return;
+        }
+        
+        fake_timer_fired_ = true;
+        
+        // Publish END event
+        auto end_msg = std_msgs::msg::String();
+        end_msg.data = "MOVE_END|" + from_wp + "|" + to_wp + "|" + cfg +
+                      "|" + std::to_string(dist);
+        move_event_pub_->publish(end_msg);
+        
+        send_feedback(1.0, "Move completed (fake)");
+        finish(true, 1.0, "Move completed (fake execution)");
+        nav_goal_sent_ = false;
+        
+        // ✅ Cancel timer after execution
+        if (fake_timer_) {
+          fake_timer_->cancel();
+          fake_timer_.reset();
+        }
+      });
+
       return;
     }
     
-    // ✅ REAL EXECUTION PATH (original Nav2 code)
+    // Real Nav2 execution
     while (!navigate_cli_->wait_for_action_server(5s)) {
       RCLCPP_INFO(get_logger(), "Waiting for navigation action server...");
     }
@@ -228,7 +372,7 @@ private:
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  auto node = std::make_shared<MoveAction>("action_move", 500ms);
+  auto node = std::make_shared<MoveAction>("action_move", 100ms);
 
   node->trigger_transition(lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE);
 
