@@ -45,14 +45,28 @@ ament_target_dependencies(action_recharge ${dependencies})
 add_executable(navigate src/navigate.cpp)
 ament_target_dependencies(navigate ${dependencies})
 
+
+add_executable(navigate_reactive src/navigate_reactive.cpp)
+ament_target_dependencies(navigate_reactive ${dependencies})
+
 install(TARGETS
   navigate
+  navigate_reactive  
   action_move
   action_recharge
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY include/
   DESTINATION include/
+)
+install(
+  PROGRAMS 
+    scripts/map_regenerator_node.py
+  DESTINATION lib/${PROJECT_NAME}
+  PERMISSIONS 
+    OWNER_READ OWNER_WRITE OWNER_EXECUTE
+    GROUP_READ GROUP_EXECUTE
+    WORLD_READ WORLD_EXECUTE
 )
 
 install(DIRECTORY
