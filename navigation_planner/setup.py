@@ -28,7 +28,7 @@ setup(
             'map_generator = navigation_planner.map_generator:main',
 
             # Launch file (optional if it has a main())
-            'benchmark_fake_launch = navigation_planner.benchmark_fake_launch:main',
+            'benchmark_fake_launch = navigation_planner.benchmark_fake.launch:main',
         ],
     },
 )
