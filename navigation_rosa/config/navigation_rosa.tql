@@ -193,7 +193,7 @@ $cc_low_speed (component: $c_controller_server,
 
 (constraint: $predicted_battery_qa, constrained: $cc_low_speed)
   isa constraint,
-  has attribute-value 15.0,
+  has attribute-value 20.0,
   has constraint-operator ">=";
 
 # === DEGRADED: < 8% ===

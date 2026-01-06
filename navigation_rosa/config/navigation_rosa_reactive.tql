@@ -154,8 +154,8 @@ $cc_degraded (component: $c_controller_server,
 
 (constraint: $battery_level_qa, constrained: $a_move_to_recharge)
   isa constraint,
-  has attribute-value 5.0,  # Only use when predicted < 10%
-  has constraint-operator "<";
+  has attribute-value 15.0,  # Only use when predicted < 10%
+  has constraint-operator "<=";
 
 # move_lit requires >= 5%
 (constraint: $battery_level_qa, constrained: $a_move_lit)
@@ -163,11 +163,11 @@ $cc_degraded (component: $c_controller_server,
   has attribute-value 5.0,
   has constraint-operator ">=";
 
-# move_dark requires >= 5%
-(constraint: $battery_level_qa, constrained: $a_move_dark)
-  isa constraint,
-  has attribute-value 5.0,
-  has constraint-operator ">=";
+# # move_dark requires >= 5%
+# (constraint: $battery_level_qa, constrained: $a_move_dark)
+#   isa constraint,
+#   has attribute-value 5.0,
+#   has constraint-operator ">=";
 
 
 # HIGH-SPEED ALLOWED when battery >= 70%
@@ -179,7 +179,7 @@ $cc_degraded (component: $c_controller_server,
 # LOW-SPEED for 40%–70%
 (constraint: $battery_level_qa, constrained: $cc_low_speed)
   isa constraint,
-  has attribute-value 15.0,
+  has attribute-value 20.0,
   has constraint-operator ">=";
 
 (constraint: $battery_level_qa, constrained: $cc_low_speed)
@@ -190,7 +190,7 @@ $cc_degraded (component: $c_controller_server,
 # DEGRADED below 40%
 (constraint: $battery_level_qa, constrained: $cc_degraded)
   isa constraint,
-  has attribute-value 10.0,
+  has attribute-value 20.0,
   has constraint-operator "<=";
 
 
@@ -313,4 +313,4 @@ $light89  (from: $wp8,  to: $wp9)   isa lighting-condition, has is-lit true, has
 $light910 (from: $wp9,  to: $wp10)  isa lighting-condition, has is-lit true, has is-dark false;
 
 # === GOAL ===
-$goal1 isa goal, has goal-name "wp_30";
+$goal1 isa goal, has goal-name "wp_40";
