@@ -32,7 +32,7 @@ class MapRegenerator(Node):
         )
 
         # Parameters
-        self.declare_parameter('n_waypoints', 31)
+        self.declare_parameter('n_waypoints', 60)
         self.declare_parameter('n_chargers', 2)
         self.declare_parameter('n_narrow_corridors', 6)
         self.declare_parameter('corridor_length', 5.0)
@@ -167,8 +167,9 @@ class MapRegenerator(Node):
         random.seed(self.current_seed)
 
         # Generate waypoints on grid
-        rows = math.ceil(math.sqrt(self.n_waypoints))
-        cols = math.ceil(self.n_waypoints / rows)
+        rows = 8
+        cols = 8
+        self.n_waypoints = rows * cols  # 64 waypoints
 
         waypoints = []
         for i in range(self.n_waypoints):
@@ -271,15 +272,30 @@ class MapRegenerator(Node):
                 f'has max-safe-speed {c["max_safe_speed"]};'
             )
 
-        # LIGHTING (always lit)
+        # LIGHTING (randomly dark or lit)
         lines.append("")
-        for c in map_data["corridors"]:
+
+        # ✅ Decide which corridors are dark (30% of them)
+        num_dark = int(len(map_data["corridors"]) * 0.3)
+        dark_corridor_indices = random.sample(range(len(map_data["corridors"])), num_dark)
+
+        for idx, c in enumerate(map_data["corridors"]):
             wp1 = c["wp1"]
             wp2 = c["wp2"]
-            lines.append(
-                f'$light{wp1}{wp2} (from: $wp{wp1}, to: $wp{wp2}) '
-                f'isa lighting-condition, has is-lit true, has is-dark false;'
-            )
+            
+            # ✅ Check if this corridor is dark
+            if idx in dark_corridor_indices:
+                # DARK corridor
+                lines.append(
+                    f'$light{wp1}{wp2} (from: $wp{wp1}, to: $wp{wp2}) '
+                    f'isa lighting-condition, has is-lit false, has is-dark true;'
+                )
+            else:
+                # LIT corridor
+                lines.append(
+                    f'$light{wp1}{wp2} (from: $wp{wp1}, to: $wp{wp2}) '
+                    f'isa lighting-condition, has is-lit true, has is-dark false;'
+        )
 
         for attempt in range(3):
             if attempt > 0:
