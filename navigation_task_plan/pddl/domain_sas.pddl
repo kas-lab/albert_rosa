@@ -23,6 +23,7 @@
     (recharge_action ?a - action)
     (action_feasible ?a - action)
     (battery_recharged ?w - waypoint)
+    (battery-safe-for-segment) 
   )
   (:functions
     (battery-level)
@@ -112,6 +113,7 @@
     :effect (and
       (at end (battery_recharged ?charging)) 
       (at end (increase (battery-level) 40))
+      (at end (battery-safe-for-segment))
     )
   )
 )
