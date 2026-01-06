@@ -293,10 +293,22 @@ protected:
   void fetch_corridor_distances();
   void fetch_charging_stations();
   void updateSafetyContext();
+  std::string scenario_difficulty_; 
 
 
   double queryCorridorWidth(const std::string& from_wp, const std::string& to_wp);
   void publishCorridorSafety(const std::string& from_wp, const std::string& to_wp);
+  struct ChargerEvaluation {
+    std::string charger_wp;
+    plansys2_msgs::msg::Plan segment1_plan;
+    plansys2_msgs::msg::Plan segment2_plan;
+    double seg1_cost;
+    double seg2_cost;
+    std::string reason;
+  };
+
+  std::optional<ChargerEvaluation> findOptimalChargerForComposite();
+  std::optional<plansys2_msgs::msg::Plan> generatePlanWithRecharge();
   
 };
 

@@ -45,13 +45,16 @@ ament_target_dependencies(action_recharge ${dependencies})
 add_executable(navigate src/navigate.cpp)
 ament_target_dependencies(navigate ${dependencies})
 
-
 add_executable(navigate_reactive src/navigate_reactive.cpp)
 ament_target_dependencies(navigate_reactive ${dependencies})
 
+add_executable(navigate_horizon src/navigate_horizon.cpp)
+ament_target_dependencies(navigate_horizon ${dependencies})
+
 install(TARGETS
   navigate
-  navigate_reactive  
+  navigate_reactive
+  navigate_horizon  
   action_move
   action_recharge
   DESTINATION lib/${PROJECT_NAME})
