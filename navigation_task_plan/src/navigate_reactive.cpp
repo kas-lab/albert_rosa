@@ -11,6 +11,14 @@
 using namespace std::chrono_literals;
 using navigation_task_plan::NavigationController;
 
+struct ScenarioDifficulty {
+  double nodes_skip;
+  double edges_remove;
+  int min_chargers;
+  int max_chargers;
+  std::string name;
+};
+
 namespace navigation_task_plan
 {
 
@@ -74,6 +82,11 @@ NavigationController::NavigationController(const std::string & node_name)
   benchmark_mode_ = this->get_parameter("benchmark_mode").as_bool();
   max_runs_ = this->get_parameter("max_benchmark_runs").as_int();
   bool enable_debug = this->get_parameter("enable_debug_in_benchmark").as_bool();  // ✅ NEW
+  this->declare_parameter("scenario_difficulty", "easy");
+  scenario_difficulty_ = this->get_parameter("scenario_difficulty").as_string();
+  
+  RCLCPP_INFO(get_logger(), 
+    "🗺️ Map generation difficulty: %s", scenario_difficulty_.c_str());
 
 
   if (benchmark_mode_) {
@@ -138,19 +151,25 @@ void NavigationController::build_problem_from_kb()
     fetch_corridor_distances();
   }
 
-  
   fetch_actions();   
   fetch_waypoints();
   fetch_corridors();
   fetch_configurations();
-  // fetch_corridor_distances();
   fetch_charging_stations();
   fetch_lighting_conditions();
-//   fetch_energy_costs();
   fetch_battery_and_feasibility();
   fetch_goal();
 
-  const auto current_wp = getCurrentWaypointFromFeedback();
+  // ✅ Determine starting position
+  std::string current_wp;
+  if (first_iteration_) {
+    // New run/plan - start from beginning
+    current_wp = "wp_0";
+  } else {
+    // Mid-execution - get actual position
+    current_wp = getCurrentWaypointFromFeedback();
+  }
+  
   problem_expert_->addPredicate(plansys2::Predicate("(at " + current_wp + ")"));
 
   std::ofstream out("/tmp/runtime_problem.pddl");
@@ -158,7 +177,6 @@ void NavigationController::build_problem_from_kb()
   out.close();
   RCLCPP_INFO(get_logger(), "Problem saved to /tmp/runtime_problem.pddl");
   
-  // Debug output
   RCLCPP_INFO(get_logger(), "cost_map_ now has %zu entries", cost_map_.size());
 }
 
@@ -1107,128 +1125,236 @@ void NavigationController::deleteMapFromKB() {
   RCLCPP_INFO(get_logger(), "✅ Map deleted from KB");
 }
 
+
 void NavigationController::generateAndInjectMap()
 {
-  map_seed_++;
-  rng_.seed(map_seed_);
-  RCLCPP_INFO(get_logger(), "🎲 Generating new map (seed: %d)", map_seed_);
+  // ═══════════════════════════════════════════════════════════════════
+  // LOOP-BASED GENERATION (replaces recursion)
+  // ═══════════════════════════════════════════════════════════════════
+  const int MAX_RETRIES = 5000;
+  int retry_count = 0;
+  bool map_generated = false;
   
-  // ═══════════════════════════════════════════════════════════════════════
-  // STEP 1: Generate Grid Layout (like Gustavo's generate_grid_graph)
-  // ═══════════════════════════════════════════════════════════════════════
+  // Variables that need to persist for injection
+  ScenarioDifficulty difficulty;
+  int num_waypoints = 0;
+  std::vector<Edge> final_edges;
+  std::vector<int> charger_nodes;
   
-  const int GRID_SIZE = 6;  // 6x6 = 36 potential waypoints
-  const double SPACING = 4;  // 10 meters between grid points
-  const double NODES_SKIP = 0.15;  // Remove 15% of nodes
-  const double EDGES_REMOVE = 0.15;  // Remove 15% of edges
-  
-  // Generate all possible grid positions
-  std::vector<std::pair<int, int>> grid_positions;  // (row, col)
-  for (int row = 0; row < GRID_SIZE; row++) {
-    for (int col = 0; col < GRID_SIZE; col++) {
-      grid_positions.push_back({row, col});
-    }
-  }
-  
-  // Randomly skip some nodes
-  int total_nodes = static_cast<int>(grid_positions.size());  // ✅ FIXED
-  int nodes_to_skip = static_cast<int>(total_nodes * NODES_SKIP);
-  
-  std::vector<int> skip_indices;
-  for (int i = 0; i < nodes_to_skip; i++) {
-    int skip_idx = std::uniform_int_distribution<>(0, total_nodes - 1)(rng_);
-    skip_indices.push_back(skip_idx);
-  }
-  
-  // Build waypoint list (excluding skipped ones)
-  std::vector<std::pair<int, int>> active_positions;
-  std::map<std::pair<int, int>, int> pos_to_wp_id;  // Map grid pos to waypoint ID
-  
-  int wp_id = 0;
-  for (size_t i = 0; i < grid_positions.size(); i++) {  // ✅ FIXED: size_t
-    if (std::find(skip_indices.begin(), skip_indices.end(), static_cast<int>(i)) == skip_indices.end()) {
-      active_positions.push_back(grid_positions[i]);
-      pos_to_wp_id[grid_positions[i]] = wp_id;
-      wp_id++;
-    }
-  }
-  
-  int num_waypoints = static_cast<int>(active_positions.size());  // ✅ FIXED
-  RCLCPP_INFO(get_logger(), "  Grid: %dx%d, Active nodes: %d (skipped %d)", 
-    GRID_SIZE, GRID_SIZE, num_waypoints, nodes_to_skip);
-  
-  // ═══════════════════════════════════════════════════════════════════════
-  // STEP 2: Generate Edges (horizontal + vertical connections)
-  // ═══════════════════════════════════════════════════════════════════════
-  
-  
-  std::vector<Edge> all_edges;
-  
-  for (size_t i = 0; i < active_positions.size(); i++) {  // ✅ FIXED: size_t
-    auto [row_i, col_i] = active_positions[i];
+  while (!map_generated && retry_count < MAX_RETRIES) {
+    map_seed_++;
+    rng_.seed(map_seed_);
     
-    for (size_t j = i + 1; j < active_positions.size(); j++) {  // ✅ FIXED: size_t
-      auto [row_j, col_j] = active_positions[j];
+    // ═══════════════════════════════════════════════════════════════════
+    // STEP 0: Select difficulty parameters
+    // ═══════════════════════════════════════════════════════════════════
+    
+    if (scenario_difficulty_ == "easy") {
+      difficulty = {
+        .nodes_skip = 0.00,
+        .edges_remove = 0.30,
+        .min_chargers = 6,
+        .max_chargers = 8,
+        .name = "EASY (Dense, many chargers)"
+      };
+    } 
+    else if (scenario_difficulty_ == "medium") {
+      difficulty = {
+        .nodes_skip = 0.00,
+        .edges_remove = 0.35,
+        .min_chargers = 4,
+        .max_chargers = 5,
+        .name = "MEDIUM (Moderate connectivity)"
+      };
+    }
+    else if (scenario_difficulty_ == "hard") {
+      difficulty = {
+        .nodes_skip = 0.00,
+        .edges_remove = 0.40,
+        .min_chargers = 3,
+        .max_chargers = 4,
+        .name = "HARD (Sparse, few chargers)"
+      };
+    }
+    else {
+      RCLCPP_ERROR(get_logger(), 
+        "❌ Unknown difficulty '%s', using EASY", scenario_difficulty_.c_str());
+      difficulty = {
+        .nodes_skip = 0.10,
+        .edges_remove = 0.10,
+        .min_chargers = 6,
+        .max_chargers = 8,
+        .name = "EASY (fallback)"
+      };
+    }
+    
+    if (retry_count == 0) {
+      RCLCPP_INFO(get_logger(), 
+        "🎲 Generating %s map (seed: %d)", difficulty.name.c_str(), map_seed_);
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════
+    // STEP 1: Generate Grid Layout
+    // ═══════════════════════════════════════════════════════════════════
+    
+    const int GRID_SIZE = 8;
+    const double SPACING = 5.0;
+    
+    std::vector<std::pair<int, int>> grid_positions;
+    for (int row = 0; row < GRID_SIZE; row++) {
+      for (int col = 0; col < GRID_SIZE; col++) {
+        grid_positions.push_back({row, col});
+      }
+    }
+    
+    int total_nodes = static_cast<int>(grid_positions.size());
+    int nodes_to_skip = static_cast<int>(total_nodes * difficulty.nodes_skip);
+    
+    std::vector<int> skip_indices;
+    for (int i = 0; i < nodes_to_skip; i++) {
+      int skip_idx = std::uniform_int_distribution<>(0, total_nodes - 1)(rng_);
+      skip_indices.push_back(skip_idx);
+    }
+    
+    std::vector<std::pair<int, int>> active_positions;
+    std::map<std::pair<int, int>, int> pos_to_wp_id;
+    
+    int wp_id = 0;
+    for (size_t i = 0; i < grid_positions.size(); i++) {
+      if (std::find(skip_indices.begin(), skip_indices.end(), static_cast<int>(i)) == skip_indices.end()) {
+        active_positions.push_back(grid_positions[i]);
+        pos_to_wp_id[grid_positions[i]] = wp_id;
+        wp_id++;
+      }
+    }
+    
+    num_waypoints = static_cast<int>(active_positions.size());
+    
+    if (retry_count == 0) {
+      RCLCPP_INFO(get_logger(), 
+        "  Grid: %dx%d, Active nodes: %d (skipped %d)", 
+        GRID_SIZE, GRID_SIZE, num_waypoints, nodes_to_skip);
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════
+    // STEP 2: Generate Edges
+    // ═══════════════════════════════════════════════════════════════════
+    
+    std::vector<Edge> all_edges;
+    
+    for (size_t i = 0; i < active_positions.size(); i++) {
+      auto [row_i, col_i] = active_positions[i];
       
-      // Check if horizontally adjacent (same row, col differs by 1)
-      bool horizontal = (row_i == row_j && std::abs(col_i - col_j) == 1);
+      for (size_t j = i + 1; j < active_positions.size(); j++) {
+        auto [row_j, col_j] = active_positions[j];
+        
+        bool horizontal = (row_i == row_j && std::abs(col_i - col_j) == 1);
+        bool vertical = (col_i == col_j && std::abs(row_i - row_j) == 1);
+        
+        if (horizontal || vertical) {
+          double dist = SPACING;
+          all_edges.push_back({static_cast<int>(i), static_cast<int>(j), dist});
+        }
+      }
+    }
+    
+    if (retry_count == 0) {
+      RCLCPP_INFO(get_logger(), "  Generated %zu potential edges", all_edges.size());
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════
+    // STEP 3: Remove Edges Based on Difficulty
+    // ═══════════════════════════════════════════════════════════════════
+    
+    std::shuffle(all_edges.begin(), all_edges.end(), rng_);
+    
+    int edges_to_remove = static_cast<int>(all_edges.size() * difficulty.edges_remove);
+    final_edges = std::vector<Edge>(
+      all_edges.begin() + edges_to_remove, 
+      all_edges.end()
+    );
+    
+    if (retry_count == 0) {
+      RCLCPP_INFO(get_logger(), 
+        "  Removed %d edges (%.0f%%), keeping %zu", 
+        edges_to_remove, difficulty.edges_remove * 100, final_edges.size());
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════
+    // STEP 4: Check Connectivity
+    // ═══════════════════════════════════════════════════════════════════
+    
+    if (isGraphConnected(num_waypoints, final_edges)) {
+      map_generated = true;
+      RCLCPP_INFO(get_logger(), "✅ Graph is connected!");
       
-      // Check if vertically adjacent (same col, row differs by 1)
-      bool vertical = (col_i == col_j && std::abs(row_i - row_j) == 1);
+      // ═══════════════════════════════════════════════════════════════════
+      // STEP 5: Place Chargers Based on Difficulty
+      // ═══════════════════════════════════════════════════════════════════
       
-      if (horizontal || vertical) {
-        double dist = SPACING;  // Fixed distance for grid
-        all_edges.push_back({static_cast<int>(i), static_cast<int>(j), dist});  // ✅ FIXED: cast to int
+      int num_chargers = std::uniform_int_distribution<>(
+        difficulty.min_chargers, 
+        difficulty.max_chargers
+      )(rng_);
+      
+      charger_nodes.clear();
+      
+      if (scenario_difficulty_ == "hard") {
+        int max_charger_wp = std::max(3, num_waypoints / 3);
+        for (int i = 0; i < num_chargers; i++) {
+          int charger_wp = std::uniform_int_distribution<>(0, max_charger_wp)(rng_);
+          charger_nodes.push_back(charger_wp);
+        }
+        RCLCPP_INFO(get_logger(), 
+          "  Placed %d chargers (CLUSTERED for hard mode)", num_chargers);
+      } 
+      else {
+        int step = num_waypoints / (num_chargers + 1);
+        for (int i = 0; i < num_chargers; i++) {
+          int charger_wp = (i + 1) * step + 
+            std::uniform_int_distribution<>(-step/3, step/3)(rng_);
+          charger_wp = std::max(0, std::min(num_waypoints - 1, charger_wp));
+          charger_nodes.push_back(charger_wp);
+        }
+        RCLCPP_INFO(get_logger(), 
+          "  Placed %d chargers (DISTRIBUTED)", num_chargers);
+      }
+      
+    } else {
+      retry_count++;
+      
+      // Log progress every 500 attempts
+      if (retry_count % 500 == 0) {
+        RCLCPP_WARN(get_logger(), 
+          "⏳ Still searching for connected graph... (attempt %d/%d)", 
+          retry_count, MAX_RETRIES);
       }
     }
   }
   
-  RCLCPP_INFO(get_logger(), "  Generated %zu potential edges", all_edges.size());
+  // ═══════════════════════════════════════════════════════════════════
+  // Check if we succeeded or failed
+  // ═══════════════════════════════════════════════════════════════════
   
-  // ═══════════════════════════════════════════════════════════════════════
-  // STEP 3: Randomly Remove Edges (like Gustavo's unconnected_amount)
-  // ═══════════════════════════════════════════════════════════════════════
-  
-  std::shuffle(all_edges.begin(), all_edges.end(), rng_);
-  
-  int edges_to_remove = static_cast<int>(all_edges.size() * EDGES_REMOVE);
-  std::vector<Edge> final_edges(
-    all_edges.begin() + edges_to_remove, 
-    all_edges.end()
-  );
-  
-  RCLCPP_INFO(get_logger(), "  Removed %d edges, keeping %zu", 
-    edges_to_remove, final_edges.size());
-  
-  // ═══════════════════════════════════════════════════════════════════════
-  // STEP 4: Check Connectivity (CRITICAL!)
-  // ═══════════════════════════════════════════════════════════════════════
-  
-  if (!isGraphConnected(num_waypoints, final_edges)) {
-    RCLCPP_ERROR(get_logger(), "❌ Generated disconnected graph! Retrying...");
-    generateAndInjectMap();  // Recursive retry
+  if (!map_generated) {
+    RCLCPP_ERROR(get_logger(), 
+      "❌ Failed to generate connected map after %d attempts!", MAX_RETRIES);
+    RCLCPP_ERROR(get_logger(), 
+      "   Last seed tried: %d (difficulty: %s)", 
+      map_seed_, difficulty.name.c_str());
+    
+    if (benchmark_mode_) {
+      current_run_data_.success = false;
+      current_run_data_.failure_reason = "map_generation_failed";
+    }
+    
+    finish_controlling();
     return;
   }
   
-  RCLCPP_INFO(get_logger(), "✅ Graph is connected!");
-  
-  // ═══════════════════════════════════════════════════════════════════════
-  // STEP 5: Randomly Place Chargers (3-5 chargers)
-  // ═══════════════════════════════════════════════════════════════════════
-  
-  int num_chargers = std::uniform_int_distribution<>(4, 7)(rng_);
-  std::vector<int> charger_nodes;
-  
-  for (int i = 0; i < num_chargers; i++) {
-    int charger_wp = std::uniform_int_distribution<>(0, num_waypoints - 1)(rng_);
-    charger_nodes.push_back(charger_wp);
-  }
-  
-  RCLCPP_INFO(get_logger(), "  Placed %d chargers", num_chargers);
-  
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════
   // STEP 6: Inject into TypeDB
-  // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════
   
   std::stringstream query;
   query << "insert ";
@@ -1256,14 +1382,14 @@ void NavigationController::generateAndInjectMap()
     double rand_val = width_dist(rng_);
     double width, max_speed;
     
-    if (rand_val < 0.25) {  // 25% narrow
-      width = 0.8 + width_dist(rng_) * 0.2;  // 0.8-1.0m
+    if (rand_val < 0.25) {
+      width = 0.8 + width_dist(rng_) * 0.2;
       max_speed = 1.0;
-    } else if (rand_val < 0.5) {  // 25% medium
-      width = 1.4 + width_dist(rng_) * 0.2;  // 1.4-1.6m
+    } else if (rand_val < 0.5) {
+      width = 1.4 + width_dist(rng_) * 0.2;
       max_speed = 1.5;
-    } else {  // 50% wide
-      width = 1.6 + width_dist(rng_) * 0.4;  // 1.6-2.0m
+    } else {
+      width = 1.6 + width_dist(rng_) * 0.4;
       max_speed = 2.0;
     }
     
@@ -1305,8 +1431,8 @@ void NavigationController::generateAndInjectMap()
   auto ins_fut = typedb_query_cli_->async_send_request(ins_req);
   if (ins_fut.wait_for(10s) == std::future_status::ready) {
     RCLCPP_INFO(get_logger(), 
-      "✅ Map injected: %d waypoints, %zu corridors, %d chargers",
-      num_waypoints, final_edges.size(), num_chargers);
+      "✅ %s map injected: %d waypoints, %zu corridors, %d chargers",
+      difficulty.name.c_str(), num_waypoints, final_edges.size(), charger_nodes.size());
   } else {
     RCLCPP_ERROR(get_logger(), "❌ Map injection TIMEOUT!");
   }
@@ -1385,22 +1511,24 @@ void NavigationController::finish_controlling()
     benchmark_pub_->publish(msg);
     
     RCLCPP_WARN(get_logger(), 
-      "✅ Run %d/%d complete. Restarting in 10 seconds...", 
+      "✅ Run %d/%d complete. Restarting...", 
       current_run_, max_runs_);
     
     if (current_run_ >= max_runs_) {
       RCLCPP_INFO(get_logger(), 
         "🏁 BENCHMARK COMPLETE: %d runs finished!", max_runs_);
       
-      // ✅ PRINT FINAL SUMMARY
-      // printBenchmarkSummary();
-      
       step_timer_->cancel();
       executor_client_->cancel_plan_execution();
       return;
     }
     
-    stop_monitoring();  
+    stop_monitoring();
+    executor_client_->cancel_plan_execution();
+    rclcpp::sleep_for(std::chrono::milliseconds(500));
+    
+    // ✅ Clear state
+    problem_expert_->clearKnowledge();
     deleteMapFromKB();
     generateAndInjectMap();
     fetch_corridor_distances();
@@ -1409,7 +1537,8 @@ void NavigationController::finish_controlling()
     std::this_thread::sleep_for(std::chrono::seconds(1));
     
     start_monitoring();
-    
+   
+
     // Reset state
     first_iteration_ = true;
     current_goal_ = "navigation";
@@ -1418,70 +1547,32 @@ void NavigationController::finish_controlling()
     last_action.clear();
     current_plan_actions_.clear();
     
-    // ✅ Reset battery to 100%
+    // ✅ Start with high_speed_config at 100% battery
+    current_config_ = "high_speed_config";
+    RCLCPP_INFO(get_logger(), "⚙️ Reset config to: %s", current_config_.c_str());
+    
+    // ✅ Reset battery to 100% for new run
     battery_level_ = 100.0;
     
-    // ✅ CRITICAL: Publish battery measurement
-    publishBatteryMeasurement(battery_level_, "battery_reset");
+    // ✅ Publish reset to ROSA so it re-evaluates from scratch
+    RCLCPP_INFO(get_logger(), "🔋 Resetting battery to 100%% for new run");
+    publishBatteryMeasurement(100.0, "battery_reset");  // ✅ Use this!
     
-    // ✅ NEW: TRIGGER ROSA to process the measurement!
+    // ✅ TRIGGER ROSA
     auto rosa_msg = std::make_unique<std_msgs::msg::String>();
     rosa_msg->data = "insert_monitoring_data";
     rosa_event_pub_->publish(std::move(rosa_msg));
     
-    RCLCPP_INFO(get_logger(), "🔋 Resetting battery to 100%% and triggering ROSA");
-    
-    // ✅ Give ROSA time to process (CRITICAL!)
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));  // ← Longer delay!
-    
-    // ✅ NOW query configs (should get all 3!)
-    auto debug_cfgs = getFeasibleConfigsFromKB();
-    RCLCPP_INFO(get_logger(), 
-      "📊 After ROSA update: %zu configs feasible:", debug_cfgs.size());
-    for (const auto& cfg : debug_cfgs) {
-      RCLCPP_INFO(get_logger(), "   ✅ %s", cfg.c_str());
-    }
-    
-    // ✅ Set initial config (prefer high_speed if available)
-    if (std::find(debug_cfgs.begin(), debug_cfgs.end(), "high_speed_config") 
-        != debug_cfgs.end()) {
-      current_config_ = "high_speed_config";
-    } else if (!debug_cfgs.empty()) {
-      current_config_ = debug_cfgs[0];  // Use best available
-    } else {
-      RCLCPP_ERROR(get_logger(), "❌ NO CONFIGS FEASIBLE AT 100%% BATTERY!");
-      current_config_ = "low_speed_config";  // Emergency fallback
-    }
-    
-    RCLCPP_INFO(get_logger(), "⚙️ Starting with config: %s", current_config_.c_str());
-    
-    // ✅ Publish selected config to battery_monitor
-    auto monitor_msg = std::make_unique<diagnostic_msgs::msg::DiagnosticArray>();
-    monitor_msg->header.stamp = this->now();
-    
-    diagnostic_msgs::msg::DiagnosticStatus monitor_status;
-    monitor_status.name = "navigation_monitoring";
-    monitor_status.message = "adaptation state";
-    
-    diagnostic_msgs::msg::KeyValue kv_config;
-    kv_config.key = "current-configuration";
-    kv_config.value = current_config_;
-    monitor_status.values.push_back(kv_config);
-    
-    monitor_msg->status.push_back(monitor_status);
-    monitoring_pub_->publish(std::move(monitor_msg));
-    
-    // ✅ Initialize corridor width
     initializeCorridorWidthInKB(2.0);
     
-    // ✅ Give everything time to settle
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // Give ROSA time to process reset
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
     
-    // ✅ Initialize benchmark tracking
+    // ✅ INITIALIZE NEW RUN DATA TRACKING
     initializeBenchmarkRun();
     
-    RCLCPP_INFO(get_logger(), "🔄 Starting run %d/%d with config: %s", 
-      current_run_ + 1, max_runs_, current_config_.c_str());
+    RCLCPP_INFO(get_logger(), "🔄 Starting run %d/%d with fresh configuration", 
+      current_run_ + 1, max_runs_);
     
     return;
   }
@@ -1983,6 +2074,44 @@ void NavigationController::triggerRecharge()
 
 void NavigationController::step()
 {
+  if (battery_level_ <= 0.0) {
+    RCLCPP_ERROR(get_logger(), 
+      "💀 BATTERY DEPLETED (%.1f%%)! Mission failed!", battery_level_);
+    
+    // ✅ CANCEL EXECUTOR IMMEDIATELY!
+    executor_client_->cancel_plan_execution();
+    rclcpp::sleep_for(std::chrono::milliseconds(500));
+    
+    // ✅ Clear problem expert (remove stale predicates)
+    problem_expert_->clearKnowledge();
+    
+    // ✅ Reset flags that might interfere
+    current_goal_ = "navigation";
+    pending_recharge_ = false;
+    recharge_completed_ = false;
+    target_charger_ = "";
+    current_plan_actions_.clear();
+    cost_map_.clear();
+    
+    // ✅ Mark current run as FAILED
+    if (benchmark_mode_) {
+      current_run_data_.success = false;
+      current_run_data_.failure_reason = "battery_depleted";
+      current_run_data_.battery_end = 0.0;
+    }
+    
+    // ✅ Let finish_controlling() handle the restart
+    finish_controlling();
+    return;
+  }
+  if (!executor_client_->execute_and_check_plan()) {
+    auto result = executor_client_->getResult();
+    if (result.has_value() && current_goal_ == "navigation") {
+      RCLCPP_INFO(get_logger(), "✅ Navigation complete! Stopping controller.");
+      finish_controlling();
+      return;  // ← Exit immediately, skip all other processing!
+    }
+  }
   // ═══════════════════════════════════════════════
   //  First iteration: start normal navigation plan
   // ═══════════════════════════════════════════════
@@ -2288,22 +2417,41 @@ void NavigationController::step()
     isActionFeasible(feasible_actions, "move_dark");
   bool recharge_feasible = isActionFeasible(feasible_actions, "recharge");
 
+  // ✅ ADD THIS LINE:
+  bool move_to_recharge_feasible = isActionFeasible(feasible_actions, "move_to_recharge");
+
   // ═══════════════════════════════════════════════
-  //  4. REACTIVE TRIGGER: Movement blocked → recharge
+  //  4. REACTIVE TRIGGER: move_to_recharge available
   // ═══════════════════════════════════════════════
-  if (!move_feasible && recharge_feasible) {
-    if (current_goal_ != "recharge" && !pending_recharge_) {
-      RCLCPP_WARN(get_logger(), 
-        "⚠️ REACTIVE: Movement blocked by battery constraints!");
-      
-      // ✅ Mark for recharge (will happen next iteration)
-      pending_recharge_ = true;
-      
-      RCLCPP_INFO(get_logger(), 
-        "🔄 Will initiate recharge on next cycle...");
-      
-      return;  // Let current tick complete
+  if (move_to_recharge_feasible &&  // ← CHANGE THIS LINE
+      current_goal_ != "recharge" && 
+      !pending_recharge_) {
+    
+    RCLCPP_WARN(get_logger(), "⚠️ REACTIVE: Battery ≤ 15%% - move_to_recharge available!");
+    
+    std::string current_position = getCurrentWaypointFromFeedback();
+    
+    if (current_position.empty()) {
+      RCLCPP_ERROR(get_logger(), "❌ Cannot determine current position!");
+      return;
     }
+    
+    target_charger_ = findNearestCharger(current_position);
+    
+    RCLCPP_ERROR(get_logger(), 
+      "🔴 SECTION 4: SET target_charger_ = '%s' (from position: %s)", 
+      target_charger_.c_str(), current_position.c_str());
+    
+    if (target_charger_.empty()) {
+      RCLCPP_ERROR(get_logger(), "❌ Failed to find charger!");
+      return;
+    }
+    
+    RCLCPP_INFO(get_logger(), "🔄 Will recharge at %s",
+      target_charger_.c_str());
+    
+    pending_recharge_ = true;
+    return;
   }
 
   // ═══════════════════════════════════════════════
@@ -2355,7 +2503,7 @@ void NavigationController::step()
       auto seconds_since_change = std::chrono::duration_cast<std::chrono::seconds>(
         now - last_config_change).count();
       
-      const int COOLDOWN_SECONDS = 10;
+      const int COOLDOWN_SECONDS = 3;
       
       if (seconds_since_change >= COOLDOWN_SECONDS) {
         
