@@ -106,6 +106,27 @@ public:
     this->declare_parameter("wp_38", rclcpp::PARAMETER_DOUBLE_ARRAY);
     this->declare_parameter("wp_39", rclcpp::PARAMETER_DOUBLE_ARRAY);
     this->declare_parameter("wp_40", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_41", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_42", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_43", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_44", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_45", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_46", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_47", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_48", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_49", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_50", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_51", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_52", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_53", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_54", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_55", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_56", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_57", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_58", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_59", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    this->declare_parameter("wp_60", rclcpp::PARAMETER_DOUBLE_ARRAY);
+    
     
     return plansys2::ActionExecutorClient::on_configure(previous_state);
   }
@@ -279,7 +300,7 @@ private:
                   from_wp.c_str(), to_wp.c_str(), cfg.c_str());
 
       // Try TypeDB first, fallback to Euclidean
-      double dist = 4.0;
+      double dist = 5.0;
       
 
       // Get config speed
