@@ -65,7 +65,7 @@ def generate_launch_description():
         parameters=[
             os.path.join(navigation_task_plan_path, 'config', 'waypoints_dark.yaml'),
             {'action_name': 'move_dark'},
-            {'fake_execution': True}
+            {'fake_execution': False}
         ]
     )
 
@@ -76,7 +76,7 @@ def generate_launch_description():
         parameters=[
             os.path.join(navigation_task_plan_path, 'config', 'waypoints_lit.yaml'),
             {'action_name': 'move_lit'},
-            {'fake_execution': True}
+            {'fake_execution': False}
         ]
     )
 
@@ -87,7 +87,7 @@ def generate_launch_description():
         parameters=[
             os.path.join(navigation_task_plan_path, 'config', 'waypoints_to_recharge.yaml'),
             {'action_name': 'move_to_recharge'},
-            {'fake_execution': True}
+            {'fake_execution': False}
         ]
     )
 
