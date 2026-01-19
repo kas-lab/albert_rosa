@@ -7,8 +7,7 @@ $wp2 isa waypoint, has waypoint-name "wp_2";
 $wp3 isa waypoint, has waypoint-name "wp_3";
 $wp4 isa waypoint, has waypoint-name "wp_4";
 
-# === Corridors
-(insert all is-corridor facts)
+# # === Corridors
 $c01 (from:$wp0, to:$wp1) isa corridor;
 $c02 (from:$wp0, to:$wp2) isa corridor;
 $c13 (from:$wp1, to:$wp3) isa corridor;
@@ -28,6 +27,16 @@ $config2 isa configuration, has config-name "config2";
 $config3 isa configuration, has config-name "config3";
 $config4 isa configuration, has config-name "config4";
 
+# === estimated cost
+$c01_cost (corridor:$c01) isa energy-cost, has value 10.0;
+$c02_cost (corridor:$c02) isa energy-cost, has value 15.0;
+$c13_cost (corridor:$c13) isa energy-cost, has value 5.0;
+$c23_cost (corridor:$c23) isa energy-cost, has value 7.0;
+$c34_cost (corridor:$c34) isa energy-cost, has value 8.0;
+
+# === Goal
+$goal1 isa goal, has goal-name "wp_4";
+
 # === Configuration Traits
 $config1_trait (configuration:$config1) isa config-trait,
   has uses-lidar true, has uses-high-speed true, has uses-low-speed false;
@@ -42,8 +51,21 @@ $config4_trait (configuration:$config4) isa config-trait,
   has uses-lidar true, has uses-high-speed false, has uses-low-speed true;
 
 # === Battery
-$batt isa measure, has measure-name "battery-level", has value 50;
+$batt isa measure, has measure-name "battery-level", has value 50.0;
 
-# === Constraint: config1 requires batt >= 30
-$constraint1 (constrained:$config1, measured:$batt) isa constraint,
-  has operator ">=", has value 30.0;
+# === Robot and linkage
+$r isa robot, has robot-name "albert";
+(robot: $r, measure: $batt) isa measured_as;
+
+
+
+# # === Constraint: config1 requires batt >= 30
+# $constraint1 (constrained:$config1, measured:$batt) isa constraint,
+#   has operator ">=", has value 30.0;
+
+
+# $r1 isa robot, has robot-name "albert";
+# $t1 isa telemetry, has value 80.0;
+# (robot: $r1, telemetry: $t1) isa measured_as;
+
+

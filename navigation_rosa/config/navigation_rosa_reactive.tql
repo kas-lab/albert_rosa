@@ -1,95 +1,58 @@
 insert
 
-# === QUALITY ATTRIBUTE: Battery Level ===
+# --- Battery Level (REAL battery)
 $battery_level_qa isa QualityAttribute, 
   has measure-name "battery-level",
   has description "Battery charge percentage";
 
-$corridor_width_qa isa QualityAttribute,
-  has measure-name "current-corridor-width",
-  has description "Width of corridor being traversed (meters)";
-# Initial battery measurement
+# Initial battery (real)
 (measured-attribute: $battery_level_qa) isa measurement,
   has measurement-value 100.0,
   has latest true;
 
-# Initial predicted battery = 100% (no plan yet)
-(measured-attribute: $predicted_battery_qa) isa measurement,
-  has measurement-value 100.0,
-  has latest true;
 
-$predicted_battery_qa isa QualityAttribute,
-  has measure-name "predicted-battery-level",
-  has description "Predicted battery level after current plan completion";
+# --- Corridor width attribute
+$corridor_width_qa isa QualityAttribute,
+  has measure-name "current-corridor-width",
+  has description "Width of corridor being traversed (meters)";
 
-# === ACTIONS ===
-$a_move_lit isa Action, 
-  has action-name "move_lit";
 
-$a_move_dark isa Action, 
-  has action-name "move_dark";
+###############################################################################
+# ACTIONS
+###############################################################################
 
-$a_recharge isa Action,
-  has action-name "recharge";
+$a_move_lit isa Action, has action-name "move_lit";
+$a_move_dark isa Action, has action-name "move_dark";
+$a_recharge isa Action, has action-name "recharge";
+$a_move_to_recharge isa Action, has action-name "move_to_recharge";
 
-$a_move_to_recharge isa Action, 
-  has action-name "move_to_recharge";
-
-# Requires same function as move_lit (navigation controller)
 (action: $a_move_to_recharge, required-function: $f_controller_lit) 
   isa functional-requirement;
 
-# === DEGRADED MODE COMPONENTS ===
+
+###############################################################################
+# COMPONENTS
+###############################################################################
+
 $c_perception isa Component,
   has component-name "perception_node",
-  has is-active true;  # Can be deactivated
+  has is-active true;
 
 $c_arm isa Component,
   has component-name "arm_controller",
-  has is-active true;  # Can be deactivated
+  has is-active true;
 
-# === Battery constraints on move actions ===
-(constraint: $predicted_battery_qa, constrained: $a_move_lit)
-  isa constraint,
-  has attribute-value 5.0,
-  has constraint-operator ">=";
-
-(constraint: $predicted_battery_qa, constrained: $a_move_dark)
-  isa constraint,
-  has attribute-value 5.0,
-  has constraint-operator ">=";
+# Nav2 controller server
+$c_controller_server isa Component,
+  has component-name "controller_server",
+  has is-active true,
+  has always-improve true;
 
 
-# === Component activation constraints ===
-# Perception deactivates when battery critical
-(constraint: $predicted_battery_qa, constrained: $c_perception)
-  isa constraint,
-  has attribute-value 10.0,
-  has constraint-operator ">=";
+###############################################################################
+# FUNCTIONS + REQUIREMENTS
+###############################################################################
 
-# Arm reduces to low power when battery critical  
-(constraint: $predicted_battery_qa, constrained: $c_arm)
-  isa constraint,
-  has attribute-value 15.0,
-  has constraint-operator ">=";
-
-# # === QUALITY ATTRIBUTE: Lighting Level ===
-# $lighting_qa isa QualityAttribute,
-#   has measure-name "current-lighting-level",
-#   has description "Lighting quality: 1.0 = lit, 0.0 = dark";
-
-# # Initial lighting measurement
-# (measured-attribute: $lighting_qa) isa measurement,
-#   has measurement-value 1.0,
-#   has latest true;
-
-# # === Constraint: High-speed requires good lighting ===
-# (constraint: $lighting_qa, constrained: $cc_high_speed)
-#   isa constraint,
-#   has attribute-value 0.5,      # Requires lighting > 0.5
-#   has constraint-operator ">";
-
-# === FUNCTIONS ===
 $f_controller_lit isa Function, 
   has function-name "controller_lit",
   has always-improve true;
@@ -98,34 +61,26 @@ $f_controller_dark isa Function,
   has function-name "controller_dark",
   has always-improve true;
 
-# === FUNCTIONAL REQUIREMENTS ===
 (action: $a_move_lit, required-function: $f_controller_lit) 
   isa functional-requirement;
 
 (action: $a_move_dark, required-function: $f_controller_dark) 
   isa functional-requirement;
 
-# === COMPONENT: Nav2 Controller Server ===
-$c_controller_server isa Component,
-  has component-name "controller_server",
-  has is-active true,
-  has always-improve true;
-
-# === FUNCTION DESIGNS ===
 $fd_lit (function: $f_controller_lit, required-component: $c_controller_server)
-  isa function-design,
-  has function-design-name "fd_controller_lit",
-  has is-selected true,
-  has priority 1.0;
+  isa function-design, has function-design-name "fd_controller_lit",
+  has is-selected true, has priority 1.0;
 
 $fd_dark (function: $f_controller_dark, required-component: $c_controller_server)
-  isa function-design,
-  has function-design-name "fd_controller_dark",
-  has is-selected true,
-  has priority 1.0;
+  isa function-design, has function-design-name "fd_controller_dark",
+  has is-selected true, has priority 1.0;
 
-# === COMPONENT PARAMETERS ===
-# === HIGH SPEED CONFIGURATION ===
+
+###############################################################################
+# COMPONENT PARAMETERS (CONFIGS)
+###############################################################################
+
+# HIGH SPEED
 $cp_max_vel_x_high isa ComponentParameter,
   has parameter-key "FollowPath.max_vel_x",
   has parameter-value "2.0",
@@ -136,7 +91,7 @@ $cp_max_vel_theta_high isa ComponentParameter,
   has parameter-value "1.0",
   has parameter-type "double";
 
-# === LOW SPEED CONFIGURATION ===
+# LOW SPEED
 $cp_max_vel_x_low isa ComponentParameter,
   has parameter-key "FollowPath.max_vel_x",
   has parameter-value "1.6",
@@ -147,7 +102,7 @@ $cp_max_vel_theta_low isa ComponentParameter,
   has parameter-value "1.6",
   has parameter-type "double";
 
-# === DEGRADED SPEED CONFIGURATION ===
+# DEGRADED SPEED
 $cp_max_vel_x_degraded isa ComponentParameter,
   has parameter-key "FollowPath.max_vel_x",
   has parameter-value "1.2",
@@ -158,7 +113,11 @@ $cp_max_vel_theta_degraded isa ComponentParameter,
   has parameter-value "1.2",
   has parameter-type "double";
 
-# === COMPONENT CONFIGURATIONS ===
+
+###############################################################################
+# COMPONENT CONFIGURATIONS
+###############################################################################
+
 $cc_high_speed (component: $c_controller_server,
                 parameter: $cp_max_vel_x_high,
                 parameter: $cp_max_vel_theta_high)
@@ -177,7 +136,7 @@ $cc_low_speed (component: $c_controller_server,
   has is-selected false,
   has priority 2.0;
 
-  $cc_degraded (component: $c_controller_server,
+$cc_degraded (component: $c_controller_server,
               parameter: $cp_max_vel_x_degraded,
               parameter: $cp_max_vel_theta_degraded)
   isa component-configuration,
@@ -186,38 +145,83 @@ $cc_low_speed (component: $c_controller_server,
   has is-selected false,
   has priority 3.0;
 
-# === PROACTIVE CONSTRAINTS (based on prediction) ===
-(constraint: $predicted_battery_qa, constrained: $a_move_to_recharge)
-  isa constraint,
-  has attribute-value 5.0,  # Only use when predicted < 10%
-  has constraint-operator "<";
 
-# === HIGH-SPEED: Use when predicted >= 50% ===
-(constraint: $predicted_battery_qa, constrained: $cc_high_speed)
+# $lighting_qa isa QualityAttribute,
+#   has measure-name "current-lighting-level",
+#   has description "Lighting quality: 1.0 = lit, 0.0 = dark";
+
+# # Initial lighting measurement
+# (measured-attribute: $lighting_qa) isa measurement,
+#   has measurement-value 1.0,
+#   has latest true;
+
+# # === Constraint: High-speed requires good lighting ===
+# (constraint: $lighting_qa, constrained: $cc_high_speed)
+#   isa constraint,
+#   has attribute-value 0.5,      # Requires lighting > 0.5
+#   has constraint-operator ">";
+###############################################################################
+# REACTIVE BATTERY-LEVEL CONSTRAINTS (NO PREDICTED BATTERY)
+###############################################################################
+
+(constraint: $battery_level_qa, constrained: $a_move_to_recharge)
+  isa constraint,
+  has attribute-value 15.0,  # Only use when predicted < 10%
+  has constraint-operator "<=";
+
+# move_lit requires >= 5%
+(constraint: $battery_level_qa, constrained: $a_move_lit)
+  isa constraint,
+  has attribute-value 15.0,
+  has constraint-operator ">=";
+
+# # move_dark requires >= 5%
+(constraint: $battery_level_qa, constrained: $a_move_dark)
+  isa constraint,
+  has attribute-value 15.0,
+  has constraint-operator ">=";
+
+
+# HIGH-SPEED ALLOWED when battery >= 70%
+(constraint: $battery_level_qa, constrained: $cc_high_speed)
   isa constraint,
   has attribute-value 30.0,
   has constraint-operator ">=";
 
-#=== LOW-SPEED: Use when 5% <= predicted < 20% ===
-# (constraint: $predicted_battery_qa, constrained: $cc_low_speed)
+# LOW-SPEED for 40%–70%
+(constraint: $battery_level_qa, constrained: $cc_low_speed)
+  isa constraint,
+  has attribute-value 25.0,
+  has constraint-operator ">=";
+
+# (constraint: $battery_level_qa, constrained: $cc_low_speed)
 #   isa constraint,
-#   has attribute-value 20.0,
+#   has attribute-value 30.0,
 #   has constraint-operator "<";
 
-(constraint: $predicted_battery_qa, constrained: $cc_low_speed)
+# DEGRADED below 40%
+(constraint: $battery_level_qa, constrained: $cc_degraded)
+  isa constraint,
+  has attribute-value 20.0,
+  has constraint-operator "<=";
+
+
+# COMPONENT REACTIONS (reactive)
+(constraint: $battery_level_qa, constrained: $c_perception)
   isa constraint,
   has attribute-value 20.0,
   has constraint-operator ">=";
 
-# === DEGRADED: < 8% ===
-
-(constraint: $predicted_battery_qa, constrained: $cc_degraded)
+(constraint: $battery_level_qa, constrained: $c_arm)
   isa constraint,
-  has attribute-value 10.0,
-  has constraint-operator "<";
+  has attribute-value 25.0,
+  has constraint-operator ">=";
 
 
-# === Corridor Widh Constraints Safety Levels ===
+###############################################################################
+# CORRIDOR WIDTH CONSTRAINTS (kept exactly)
+###############################################################################
+
 (constraint: $corridor_width_qa, constrained: $cc_high_speed)
   isa constraint,
   has attribute-value 1.4,
@@ -228,11 +232,10 @@ $cc_low_speed (component: $c_controller_server,
   has attribute-value 0.8,
   has constraint-operator ">=";
 
-# (constraint: $corridor_width_qa, constrained: $cc_low_speed)
-#   isa constraint,
-#   has attribute-value 1.4,
-#   has constraint-operator "<=";
-
+(constraint: $corridor_width_qa, constrained: $cc_degraded)
+  isa constraint,
+  has attribute-value 0.5,
+  has constraint-operator ">=";
 
 # === WAYPOINTS (EXTENDED) ===
 $wp0  isa waypoint, has waypoint-name "wp_0",  has risk-level "safe";
@@ -584,8 +587,6 @@ $light1918 (from: $wp19, to: $wp18)  isa lighting-condition, has is-lit true, ha
 
 $light1920 (from: $wp19, to: $wp20)  isa lighting-condition, has is-lit true, has is-dark false;
 $light2019 (from: $wp20, to: $wp19)  isa lighting-condition, has is-lit true, has is-dark false;
-
-
 
 # === GOAL ===
 $goal1 isa goal, has goal-name "wp_15";

@@ -1,17 +1,3 @@
-# Copyright 2024 Gustavo Rezende Silva
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -24,24 +10,29 @@ def generate_launch_description():
     navigation_task_plan_path = get_package_share_directory('navigation_task_plan')
     plansys_path = get_package_share_directory('plansys2_bringup')
 
-    
-    # Launch arguments with sensible defaults
     benchmark_mode_arg = DeclareLaunchArgument(
         'benchmark_mode',
-        default_value='false',  # ✅ Set to 'true' to enable benchmark mode
+        default_value='false',
         description='Enable benchmark auto-restart mode'
     )
     
     max_runs_arg = DeclareLaunchArgument(
         'max_benchmark_runs',
-        default_value='100',  # ✅ Change number of runs here
+        default_value='100',
         description='Number of benchmark runs to execute'
     )
     
     debug_arg = DeclareLaunchArgument(
         'enable_debug_in_benchmark',
-        default_value='false',  # ✅ Set to 'true' to see ALL logs during benchmark
-        description='Show DEBUG/INFO logs during benchmark (warning: very verbose!)'
+        default_value='false',
+        description='Show DEBUG/INFO logs during benchmark'
+    )
+    
+    # ✅ ADD THIS: Scenario difficulty argument
+    difficulty_arg = DeclareLaunchArgument(
+        'scenario_difficulty',
+        default_value='easy',
+        description='Map difficulty: easy, medium, or hard'
     )
     
     plansys2_bringup = IncludeLaunchDescription(
@@ -56,14 +47,15 @@ def generate_launch_description():
     
     navigation_controller_node = Node(
         package='navigation_task_plan',
-        executable='navigate',
+        executable='navigate_horizon',
         parameters=[
             {'rosa_actions': ['move_dark', 'move_lit', 'recharge', 'move_to_recharge']},
             {'benchmark_mode': LaunchConfiguration('benchmark_mode')},
             {'max_benchmark_runs': LaunchConfiguration('max_benchmark_runs')},
-            {'enable_debug_in_benchmark': LaunchConfiguration('enable_debug_in_benchmark')}, 
+            {'enable_debug_in_benchmark': LaunchConfiguration('enable_debug_in_benchmark')},
+            {'scenario_difficulty': LaunchConfiguration('scenario_difficulty')},  # ✅ ADD THIS
         ],
-        output='screen'  
+        output='screen'
     )
 
     pddl_move_action_node_dark = Node(
@@ -73,7 +65,7 @@ def generate_launch_description():
         parameters=[
             os.path.join(navigation_task_plan_path, 'config', 'waypoints_dark.yaml'),
             {'action_name': 'move_dark'},
-            {'fake_execution': True}
+            {'fake_execution': False}
         ]
     )
 
@@ -84,7 +76,7 @@ def generate_launch_description():
         parameters=[
             os.path.join(navigation_task_plan_path, 'config', 'waypoints_lit.yaml'),
             {'action_name': 'move_lit'},
-            {'fake_execution': True}
+            {'fake_execution': False}
         ]
     )
 
@@ -95,7 +87,7 @@ def generate_launch_description():
         parameters=[
             os.path.join(navigation_task_plan_path, 'config', 'waypoints_to_recharge.yaml'),
             {'action_name': 'move_to_recharge'},
-            {'fake_execution': True}
+            {'fake_execution': False}
         ]
     )
 
@@ -111,6 +103,7 @@ def generate_launch_description():
         benchmark_mode_arg,
         max_runs_arg,
         debug_arg,
+        difficulty_arg,  # ✅ ADD THIS
         plansys2_bringup,
         navigation_controller_node,
         pddl_move_action_node_dark,

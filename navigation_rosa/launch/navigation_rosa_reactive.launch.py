@@ -38,7 +38,7 @@ def generate_launch_description():
     pkg_navigation_rosa = get_package_share_directory(
         'navigation_rosa')
     data_path_ = "[{}]".format(
-        os.path.join(pkg_navigation_rosa, 'config', 'navigation_rosa.tql'))
+        os.path.join(pkg_navigation_rosa, 'config', 'navigation_rosa_reactive.tql'))
     data_path_arg = DeclareLaunchArgument(
         'data_path',
         default_value=data_path_,
