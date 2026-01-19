@@ -26,9 +26,9 @@ setup(
             'benchmark_coordinator_rosa = navigation_planner.benchmark_coordinator_rosa:main',
             'fake_action_executor = navigation_planner.fake_action_executor:main',
             'map_generator = navigation_planner.map_generator:main',
-
+            'real_sim_tracker = navigation_planner.real_sim_tracker:main',
             # Launch file (optional if it has a main())
-            'benchmark_fake_launch = navigation_planner.benchmark_fake.launch:main',
+            'benchmark_tracker = navigation_planner.benchmark_tracker:main',
         ],
     },
 )
