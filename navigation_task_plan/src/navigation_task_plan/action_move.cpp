@@ -259,50 +259,51 @@ private:
     std::string goal_wp = get_arguments()[1];
     current_goal_wp_ = goal_wp;
     
-    if (fake_execution_) {
-      RCLCPP_INFO(get_logger(), "🎭 Fake execution enabled");
+    // ========================================
+    // ✅ PARSE ARGUMENTS FIRST (for both modes)
+    // ========================================
+    auto args = get_arguments();
+    std::string from_wp, to_wp, cfg;
+    std::string pddl_action = args.empty() ? "unknown" : args[0];
 
-      auto args = get_arguments();
-      std::string from_wp, to_wp, cfg;
-
-      if (args[0] == "move_to_recharge") {
+    if (args[0] == "move_to_recharge") {
         if (args.size() >= 3) {
             from_wp = args[1];  
             to_wp = args[2];    
             cfg = "low_speed_config";
-            
-            RCLCPP_INFO(get_logger(), 
-              "🔌 Recharge move: %s → %s", from_wp.c_str(), to_wp.c_str());
         } else {
             RCLCPP_ERROR(get_logger(),
               "move_to_recharge needs at least 3 args, got %zu", args.size());
             return;
         }
     }
-      else if (args.size() >= 4 &&
-              (args[0] == "move_lit" || args[0] == "move_dark")) {
-          from_wp = args[1];
-          to_wp   = args[2];
-          cfg     = args[3];
-      }
-      else if (args.size() >= 3) {
-          from_wp = args[0];
-          to_wp   = args[1];
-          cfg     = args[2];
-      }
-      else {
-          RCLCPP_ERROR(get_logger(),
-              "Cannot parse action arguments for fake execution (args=%zu)", args.size());
-          return;
-      }
-
+    else if (args.size() >= 4 &&
+            (args[0] == "move_lit" || args[0] == "move_dark")) {
+        from_wp = args[1];
+        to_wp   = args[2];
+        cfg     = args[3];
+    }
+    else if (args.size() >= 3) {
+        from_wp = args[0];
+        to_wp   = args[1];
+        cfg     = args[2];
+    }
+    else {
+        RCLCPP_ERROR(get_logger(),
+            "Cannot parse action arguments (args=%zu)", args.size());
+        return;
+    }
+    
+    // ========================================
+    // FAKE EXECUTION MODE
+    // ========================================
+    if (fake_execution_) {
+      RCLCPP_INFO(get_logger(), "🎭 Fake execution enabled");
       RCLCPP_INFO(get_logger(), "Fake move %s → %s (%s)",
                   from_wp.c_str(), to_wp.c_str(), cfg.c_str());
 
-      // Try TypeDB first, fallback to Euclidean
       double dist = 5.0;
       
-
       // Get config speed
       double config_speed = 1.0;
       if (cfg.find("high_speed") != std::string::npos) {
@@ -322,8 +323,8 @@ private:
       
       // Publish START event
       auto event_msg = std_msgs::msg::String();
-      event_msg.data = "MOVE_START|" + from_wp + "|" + to_wp + "|" + cfg + 
-                       "|" + std::to_string(dist);
+      event_msg.data = "MOVE_START|" + from_wp + "|" + to_wp + "|" + cfg +
+                      "|" + std::to_string(dist) + "|" + pddl_action;
       move_event_pub_->publish(event_msg);
       
       fake_timer_fired_ = false;
@@ -331,7 +332,6 @@ private:
       std::chrono::milliseconds(scaled_ms),
       [this, from_wp, to_wp, cfg, dist]() {
         
-        // ✅ Simple check: if timer already fired, ignore
         if (fake_timer_fired_) {
           return;
         }
@@ -348,7 +348,6 @@ private:
         finish(true, 1.0, "Move completed (fake execution)");
         nav_goal_sent_ = false;
         
-        // ✅ Cancel timer after execution
         if (fake_timer_) {
           fake_timer_->cancel();
           fake_timer_.reset();
@@ -358,7 +357,13 @@ private:
       return;
     }
     
-    // Real Nav2 execution
+    // ========================================
+    // ✅ REAL NAV2 EXECUTION
+    // ========================================
+    
+    RCLCPP_INFO(get_logger(), "🚀 Real Nav2 move: %s → %s (%s)",
+                from_wp.c_str(), to_wp.c_str(), cfg.c_str());
+    
     while (!navigate_cli_->wait_for_action_server(5s)) {
       RCLCPP_INFO(get_logger(), "Waiting for navigation action server...");
     }
@@ -367,6 +372,15 @@ private:
     nav2_msgs::action::NavigateToPose::Goal navigation_goal;
     navigation_goal.pose = get_waypoint(goal_wp);
     dist_to_move_ = getDistance(navigation_goal.pose.pose, current_pos_);
+
+    // ✅ Publish MOVE_START event (REAL MODE)
+    auto event_msg = std_msgs::msg::String();
+    event_msg.data = "MOVE_START|" + from_wp + "|" + to_wp + "|" + cfg +
+                    "|" + std::to_string(dist_to_move_) + "|" + pddl_action;
+    move_event_pub_->publish(event_msg);
+    
+    RCLCPP_INFO(get_logger(), "📡 Published MOVE_START: %s → %s (%.2fm)",
+                from_wp.c_str(), to_wp.c_str(), dist_to_move_);
 
     auto send_goal_options =
       rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
@@ -380,7 +394,16 @@ private:
           "Move running");
       };
 
-    send_goal_options.result_callback = [this](auto) {
+    // ✅ Publish MOVE_END when Nav2 completes
+    send_goal_options.result_callback = [this, from_wp, to_wp, cfg](auto) {
+        // Publish END event
+        auto end_msg = std_msgs::msg::String();
+        end_msg.data = "MOVE_END|" + from_wp + "|" + to_wp;
+        move_event_pub_->publish(end_msg);
+        
+        RCLCPP_INFO(get_logger(), "📡 Published MOVE_END: %s → %s",
+                    from_wp.c_str(), to_wp.c_str());
+        
         finish(true, 1.0, "Move completed");
         nav_goal_sent_ = false;
       };
