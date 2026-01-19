@@ -23,9 +23,11 @@
     (recharge_action ?a - action)
     (action_feasible ?a - action)
     (battery_recharged ?w - waypoint)
+    (battery-safe-for-segment) 
   )
   (:functions
     (battery-level)
+    (energy-cost ?from - waypoint ?to - waypoint ?c - configuration)
   )
 
   ;; ═══════════════════════════════════════════════
@@ -44,10 +46,12 @@
       (at start (has-enough-battery ?from ?to ?c))
       (at start (move_lit_action ?a))
       (at start (action_feasible ?a))
+      ; (at start (>= (battery-level) (energy-cost ?from ?to ?c)))
     )
     :effect (and
       (at end (not (at ?from)))
       (at end (at ?to))
+      (at end (decrease (battery-level) (energy-cost ?from ?to ?c)))
     )
   )
 
@@ -64,10 +68,12 @@
       (at start (has-enough-battery ?from ?to ?c))
       (at start (move_dark_action ?a))
       (at start (action_feasible ?a))
+      ; (at start (>= (battery-level) (energy-cost ?from ?to ?c)))
     )
     :effect (and
       (at end (not (at ?from)))
       (at end (at ?to))
+      (at end (decrease (battery-level) (energy-cost ?from ?to ?c)))
     )
   )
 
@@ -86,10 +92,12 @@
       (at start (can-traverse ?from ?to ?c))
       (at start (move_to_recharge_action ?a))
       (at start (action_feasible ?a))
+      ; (at start (>= (battery-level) (energy-cost ?from ?to ?c)))
     )
     :effect (and
       (at end (not (at ?from)))
       (at end (at ?to))
+      (at end (decrease (battery-level) (energy-cost ?from ?to ?c)))
     )
   )
 
@@ -104,10 +112,12 @@
       (at start (has-charging-station ?charging))
       (at start (recharge_action ?a))
       (at start (action_feasible ?a))
+      (over all (at ?charging))
     )
     :effect (and
       (at end (battery_recharged ?charging)) 
-      (at end (increase (battery-level) 40))
+      (at end (assign (battery-level) 100))
+      (at end (battery-safe-for-segment))
     )
   )
 )
