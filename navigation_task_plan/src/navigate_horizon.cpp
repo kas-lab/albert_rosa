@@ -62,11 +62,6 @@ NavigationController::NavigationController(const std::string & node_name)
       amcl_pose_ = *msg;
       latest_amcl_pose_received_ = true;
     });
-  
-  // this->declare_parameter("enable_reactive", false);
-  
-  // // bool enable_reactive = this->get_parameter("enable_reactive").as_bool();
-
 
   this->declare_parameter("enable_proactive", true);
   bool enable_proactive = this->get_parameter("enable_proactive").as_bool();
@@ -99,13 +94,10 @@ NavigationController::NavigationController(const std::string & node_name)
         
         rcutils_logging_set_default_logger_level(RCUTILS_LOG_SEVERITY_WARN);
     } else {
-        // ✅ ONLY debug THIS node, not all the RCL/RMW spam!
         RCLCPP_WARN(get_logger(), "🔊 DEBUG MODE: Application logs ONLY (no RCL spam)");
         
-        // Set DEFAULT to INFO (silences rcl/rmw DEBUG spam)
         rcutils_logging_set_default_logger_level(RCUTILS_LOG_SEVERITY_INFO);
         
-        // ✅ Enable DEBUG for ONLY your application nodes
         rcutils_logging_set_logger_level(
             "navigate_controller", 
             RCUTILS_LOG_SEVERITY_DEBUG);
@@ -188,7 +180,6 @@ void NavigationController::build_problem_from_kb()
         name.c_str(), meas, op.c_str(), val, status.c_str());
     }
   }
-  // fetch_corridor_distances();
   fetch_charging_stations();
   fetch_lighting_conditions();
   fetch_energy_costs();
@@ -394,7 +385,7 @@ void NavigationController::fetch_configurations()
 void NavigationController::addCorridorTraversalRules(
     const std::vector<std::string>& feasible_cfgs)
 {
-  RCLCPP_INFO(get_logger(), "🛡️ Building corridor-width-based traversal rules...");
+  RCLCPP_INFO(get_logger(), "🛡️ Building corridor safety rules (width + lighting)...");
   
   // Step 1: Fetch corridor widths
   auto corridor_req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
@@ -429,7 +420,6 @@ void NavigationController::addCorridorTraversalRules(
   auto constraint_fut = typedb_query_cli_->async_send_request(constraint_req);
   if (constraint_fut.wait_for(std::chrono::seconds(2)) != std::future_status::ready) {
     RCLCPP_WARN(get_logger(), "⚠️ No width constraints found - allowing all configs");
-    // Fallback: allow all feasible configs through all corridors
     for (const auto& [w1, w2] : corridor_pairs_) {
       for (const auto& cfg : feasible_cfgs) {
         problem_expert_->addPredicate(
@@ -440,9 +430,9 @@ void NavigationController::addCorridorTraversalRules(
   }
   auto constraint_resp = constraint_fut.get();
 
-  // Step 3: Parse width requirements for each config
+  // Step 3: Parse width requirements
   struct WidthConstraint {
-    std::string op;      // ">=", ">", "<=", "<"
+    std::string op;
     double threshold;
   };
   std::map<std::string, WidthConstraint> config_width_reqs;
@@ -484,22 +474,77 @@ void NavigationController::addCorridorTraversalRules(
 
   RCLCPP_INFO(get_logger(), "  Found %zu corridors with widths", corridor_widths.size());
 
-  // Step 5: Add can-traverse based on ROSA's width constraints
+  // ✅ NEW Step 5: Fetch lighting conditions
+  auto lighting_req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+  lighting_req->query_type = "fetch";
+  lighting_req->query =
+    "match "
+    "$l (from:$w1, to:$w2) isa lighting-condition, "
+    "has is-dark $dark; "
+    "$w1 has waypoint-name $a; "
+    "$w2 has waypoint-name $b; "
+    "fetch $a; $b; $dark;";
+
+  auto lighting_fut = typedb_query_cli_->async_send_request(lighting_req);
+  
+  std::map<std::pair<std::string, std::string>, bool> corridor_lighting;
+  
+  if (lighting_fut.wait_for(std::chrono::seconds(2)) == std::future_status::ready) {
+    auto lighting_resp = lighting_fut.get();
+    
+    for (const auto& row : lighting_resp->results) {
+      std::string w1, w2;
+      bool is_dark = false;
+      
+      for (const auto& attr : row.attributes) {
+        if (attr.name == "a") w1 = attr.value.string_value;
+        else if (attr.name == "b") w2 = attr.value.string_value;
+        else if (attr.name == "dark") is_dark = attr.value.bool_value;
+      }
+      
+      if (!w1.empty() && !w2.empty()) {
+        corridor_lighting[{w1, w2}] = is_dark;
+      }
+    }
+    
+    RCLCPP_INFO(get_logger(), "  Found lighting data for %zu corridors", 
+      corridor_lighting.size());
+  } else {
+    RCLCPP_WARN(get_logger(), "⚠️ No lighting data found - assuming all lit");
+  }
+
+  // Step 6: Add can-traverse based on width AND lighting
   int safe_traversals = 0;
-  int blocked_traversals = 0;
+  int blocked_width = 0;
+  int blocked_lighting = 0;
 
   for (const auto& [corridor, width] : corridor_widths) {
     const auto& [w1, w2] = corridor;
     
+    // Check if corridor is dark
+    bool is_dark = false;
+    auto lit_it = corridor_lighting.find({w1, w2});
+    if (lit_it != corridor_lighting.end()) {
+      is_dark = lit_it->second;
+    }
+    
     for (const auto& cfg : feasible_cfgs) {
+      
+      // ✅ LIGHTING FILTER: Block high_speed in dark corridors
+      if (is_dark && cfg == "high_speed_config") {
+        blocked_lighting++;
+        RCLCPP_INFO(get_logger(), "🌙 %s→%s: %s BLOCKED (dark corridor)",
+          w1.c_str(), w2.c_str(), cfg.c_str());
+        continue;  // Skip adding can-traverse!
+      }
+      
       bool allowed = true;
       
-      // Check if this config has a width constraint
+      // WIDTH FILTER: Check width constraints
       auto it = config_width_reqs.find(cfg);
       if (it != config_width_reqs.end()) {
         const auto& constraint = it->second;
         
-        // Evaluate constraint
         if (constraint.op == ">=") {
           allowed = (width >= constraint.threshold);
         } else if (constraint.op == ">") {
@@ -514,17 +559,18 @@ void NavigationController::addCorridorTraversalRules(
           problem_expert_->addPredicate(plansys2::Predicate(
             "(can-traverse " + w1 + " " + w2 + " " + cfg + ")"));
           safe_traversals++;
-          RCLCPP_DEBUG(get_logger(), "✅ %s→%s: %s allowed (%.2fm %s %.2fm)",
+          RCLCPP_DEBUG(get_logger(), "✅ %s→%s: %s allowed (%.2fm %s %.2fm%s)",
             w1.c_str(), w2.c_str(), cfg.c_str(), 
-            width, constraint.op.c_str(), constraint.threshold);
+            width, constraint.op.c_str(), constraint.threshold,
+            is_dark ? ", dark" : "");
         } else {
-          blocked_traversals++;
+          blocked_width++;
           RCLCPP_INFO(get_logger(), "🚫 %s→%s: %s BLOCKED (%.2fm %s %.2fm)",
             w1.c_str(), w2.c_str(), cfg.c_str(),
             width, constraint.op.c_str(), constraint.threshold);
         }
       } else {
-        // No width constraint for this config - allow it
+        // No width constraint - allow it
         problem_expert_->addPredicate(plansys2::Predicate(
           "(can-traverse " + w1 + " " + w2 + " " + cfg + ")"));
         safe_traversals++;
@@ -533,10 +579,9 @@ void NavigationController::addCorridorTraversalRules(
   }
 
   RCLCPP_INFO(get_logger(), 
-    "✅ Traversal rules: %d safe, %d blocked due to width constraints",
-    safe_traversals, blocked_traversals);
+    "✅ Traversal rules: %d safe, %d blocked (%d width, %d lighting)",
+    safe_traversals, blocked_width, blocked_lighting);
 }
-
 
 void NavigationController::fetch_lighting_conditions()
 {
@@ -842,12 +887,21 @@ void NavigationController::fetch_charging_stations()
 
 void NavigationController::fetch_battery_and_feasibility()
 {
-  plansys2::Function batt;
-  batt.name = "battery-level";
-  batt.value = battery_level_;
-  if (!problem_expert_->existFunction(batt)) problem_expert_->addFunction(batt);
-  else problem_expert_->updateFunction(batt);
-
+  // ✅ CORRECT WAY - with node type!
+  plansys2_msgs::msg::Node batt_node;
+  batt_node.node_type = plansys2_msgs::msg::Node::FUNCTION;
+  batt_node.name = "battery-level";
+  batt_node.value = battery_level_;
+  
+  plansys2::Function batt(batt_node);
+  
+  if (!problem_expert_->existFunction(batt)) {
+    problem_expert_->addFunction(batt);
+  } else {
+    problem_expert_->updateFunction(batt);
+  }
+    
+  // Rest of your code...
   const auto feasible_cfgs = getFeasibleConfigsFromKB();
   for (const auto &[w1, w2] : corridor_pairs_)
     for (const auto &cfg : feasible_cfgs)
@@ -1017,29 +1071,6 @@ void NavigationController::updatePredictedBatteryInKB(
   kv.value = std::to_string(predicted_level);
   status.values.push_back(kv);
   
-  // Current config
-  // diagnostic_msgs::msg::KeyValue kv_config;
-  // kv_config.key = "current-configuration";
-  // kv_config.value = current_config_;
-  // status.values.push_back(kv_config);
-  
-  // // ✅ ADD REASON
-  // diagnostic_msgs::msg::KeyValue kv_reason;
-  // kv_reason.key = "adaptation-reason";
-  // kv_reason.value = reason;
-  // status.values.push_back(kv_reason);
-
-  // diagnostic_msgs::msg::KeyValue kv_perception;
-  // kv_perception.key = "perception-active";
-  // kv_perception.value = perception_active_ ? "true" : "false";
-  // status.values.push_back(kv_perception);
-  
-  // // ✅ ADD: Arm state
-  // diagnostic_msgs::msg::KeyValue kv_arm;
-  // kv_arm.key = "arm-power-level";
-  // kv_arm.value = arm_active_ ? "high" : "low";
-  // status.values.push_back(kv_arm);
-  
   diag_msg->status.push_back(status);
   diagnostics_pub_->publish(std::move(diag_msg));
 
@@ -1051,6 +1082,17 @@ void NavigationController::updatePredictedBatteryInKB(
   monitor_status.message = "adaptation state";
   
   // ✅ Strings for monitoring (battery_monitor reads these)
+  diagnostic_msgs::msg::KeyValue kv_perception;
+  kv_perception.key = "perception-active";
+  kv_perception.value = perception_active_ ? "true" : "false";
+  monitor_status.values.push_back(kv_perception);
+  
+  // ✅ ADD: Arm state
+  diagnostic_msgs::msg::KeyValue kv_arm;
+  kv_arm.key = "arm-power-level";
+  kv_arm.value = arm_active_ ? "high" : "low";
+  monitor_status.values.push_back(kv_arm);
+
   diagnostic_msgs::msg::KeyValue kv_config;
   kv_config.key = "current-configuration";
   kv_config.value = current_config_;
@@ -1068,7 +1110,8 @@ void NavigationController::updatePredictedBatteryInKB(
     "✅ Published to /diagnostics: battery=%.2f%%, config=%s, reason=%s", 
     predicted_level, current_config_.c_str(), reason.c_str());
 }
-const int PREDICTION_HORIZON = 5;
+
+const int PREDICTION_HORIZON = 6;
 void NavigationController::evaluateFutureFeasibility()
 {
   auto feedback = executor_client_->getFeedBack();
@@ -1475,49 +1518,75 @@ void NavigationController::execute_plan()
   current_plan_actions_.clear();
   
   RCLCPP_INFO(get_logger(), "\n=== GENERATED PLAN ===");
+
+std::string first_config;
+for (size_t i = 0; i < plan->items.size(); i++) {
+  const auto &item = plan->items[i];
+  RCLCPP_INFO(get_logger(), "[%zu] Action: '%s'", i, item.action.c_str());
   
-  std::string first_config;  // ✅ NEW: Extract first action's config
-  
-  for (size_t i = 0; i < plan->items.size(); i++) {
-    const auto &item = plan->items[i];
-    RCLCPP_INFO(get_logger(), "[%zu] Action: '%s'", i, item.action.c_str());
+  // ✅ NEW: Check if this is a recharge action FIRST
+  if (item.action.find("recharge") != std::string::npos) {
+    // Parse: (recharge recharge wp_21)
+    size_t first_space = item.action.find(' ');
+    size_t second_space = item.action.find(' ', first_space + 1);
+    size_t closing_paren = item.action.find(')');
     
-    auto [from, to, cfg] = parse_action(item.action);
-    
-    // ✅ NEW: Capture first config
-    if (i == 0 && !cfg.empty()) {
-      first_config = cfg;
-    }
-    
-    if (!from.empty() && !to.empty() && !cfg.empty()) {
-      std::stringstream ss(item.action);
-      std::string action_name;
-      ss >> action_name;
-      action_name.erase(std::remove(action_name.begin(), action_name.end(), '('), action_name.end());
-      action_name.erase(std::remove(action_name.begin(), action_name.end(), ')'), action_name.end());
-      
-      auto key = std::make_tuple(from, to, cfg);
-      double cost = 0.0;
-      if (cost_map_.count(key)) {
-        cost = cost_map_[key];
-      }
+    if (second_space != std::string::npos) {
+      std::string waypoint = item.action.substr(second_space + 1, 
+                                                closing_paren - second_space - 1);
+      // Remove trailing whitespace/parenthesis
+      waypoint.erase(std::remove(waypoint.begin(), waypoint.end(), ')'), waypoint.end());
+      waypoint.erase(waypoint.find_last_not_of(" \t\n\r") + 1);
       
       ParsedAction pa;
-      pa.action_name = action_name;
-      pa.from = from;
-      pa.to = to;
-      pa.config = cfg;
-      pa.cost = cost;
-      
+      pa.action_name = "recharge";
+      pa.from = waypoint;  // Charging station location
+      pa.to = "";
+      pa.config = "";
+      pa.cost = 0.0;
       current_plan_actions_.push_back(pa);
       
-      RCLCPP_INFO(get_logger(), 
-        "     ✓ %s: %s → %s (%s) cost=%.2f", 
-        action_name.c_str(), from.c_str(), to.c_str(), cfg.c_str(), cost);
-    } else {
-      RCLCPP_WARN(get_logger(), "     ✗ Failed to parse action");
+      RCLCPP_INFO(get_logger(), "     ⚡ recharge at: %s", waypoint.c_str());
+      continue;  // Skip normal parsing
     }
   }
+  
+  // ✅ EXISTING CODE: Normal move action parsing
+  auto [from, to, cfg] = parse_action(item.action);
+  
+  // Capture first config
+  if (i == 0 && !cfg.empty()) {
+    first_config = cfg;
+  }
+  
+  if (!from.empty() && !to.empty() && !cfg.empty()) {
+    std::stringstream ss(item.action);
+    std::string action_name;
+    ss >> action_name;
+    action_name.erase(std::remove(action_name.begin(), action_name.end(), '('), action_name.end());
+    action_name.erase(std::remove(action_name.begin(), action_name.end(), ')'), action_name.end());
+    
+    auto key = std::make_tuple(from, to, cfg);
+    double cost = 0.0;
+    if (cost_map_.count(key)) {
+      cost = cost_map_[key];
+    }
+    
+    ParsedAction pa;
+    pa.action_name = action_name;
+    pa.from = from;
+    pa.to = to;
+    pa.config = cfg;
+    pa.cost = cost;
+    current_plan_actions_.push_back(pa);
+    
+    RCLCPP_INFO(get_logger(), 
+                "     ✓ %s: %s → %s (%s) cost=%.2f", 
+                action_name.c_str(), from.c_str(), to.c_str(), cfg.c_str(), cost);
+  } else {
+    RCLCPP_WARN(get_logger(), "     ✗ Failed to parse action");
+  }
+}
   
   // ✅ FIX: Update current_config_ and tell ROSA to use it!
   if (!current_plan_actions_.empty() && !first_config.empty()) {
@@ -1837,8 +1906,16 @@ void NavigationController::generateAndInjectMap()
   // Add corridors with random widths
   std::uniform_real_distribution<> width_dist(0.0, 1.0);
   int corr_idx = 0;
-  
-  for (const auto& edge : final_edges) {
+
+  // ✅ NEW: Decide which corridors are dark (30% of them)
+  std::vector<bool> is_dark_corridor;
+  for (size_t i = 0; i < final_edges.size(); i++) {
+    is_dark_corridor.push_back(width_dist(rng_) < 0.3);  // 30% dark
+  }
+
+  for (size_t edge_idx = 0; edge_idx < final_edges.size(); edge_idx++) {
+    const auto& edge = final_edges[edge_idx];
+    
     double rand_val = width_dist(rng_);
     double width, max_speed;
     
@@ -1856,6 +1933,9 @@ void NavigationController::generateAndInjectMap()
     const char* obstacles[] = {"low", "medium", "high"};
     const char* obstacle = obstacles[static_cast<int>(width_dist(rng_) * 3) % 3];
     
+    // ✅ Check if this corridor is dark
+    bool is_dark = is_dark_corridor[edge_idx];
+    
     // Forward corridor
     query << "$c" << corr_idx << " (from: $w" << edge.from_wp 
           << ", to: $w" << edge.to_wp << ") isa corridor, "
@@ -1864,9 +1944,16 @@ void NavigationController::generateAndInjectMap()
           << "has max-safe-speed " << max_speed << ", "
           << "has obstacle-density '" << obstacle << "'; ";
     
-    query << "$l" << corr_idx << " (from: $w" << edge.from_wp 
-          << ", to: $w" << edge.to_wp << ") isa lighting-condition, "
-          << "has is-lit true, has is-dark false; ";
+    // ✅ Forward lighting (conditional)
+    if (is_dark) {
+      query << "$l" << corr_idx << " (from: $w" << edge.from_wp 
+            << ", to: $w" << edge.to_wp << ") isa lighting-condition, "
+            << "has is-lit false, has is-dark true; ";
+    } else {
+      query << "$l" << corr_idx << " (from: $w" << edge.from_wp 
+            << ", to: $w" << edge.to_wp << ") isa lighting-condition, "
+            << "has is-lit true, has is-dark false; ";
+    }
     corr_idx++;
     
     // Backward corridor
@@ -1877,9 +1964,16 @@ void NavigationController::generateAndInjectMap()
           << "has max-safe-speed " << max_speed << ", "
           << "has obstacle-density '" << obstacle << "'; ";
     
-    query << "$l" << corr_idx << " (from: $w" << edge.to_wp 
-          << ", to: $w" << edge.from_wp << ") isa lighting-condition, "
-          << "has is-lit true, has is-dark false; ";
+    // ✅ Backward lighting (same as forward!)
+    if (is_dark) {
+      query << "$l" << corr_idx << " (from: $w" << edge.to_wp 
+            << ", to: $w" << edge.from_wp << ") isa lighting-condition, "
+            << "has is-lit false, has is-dark true; ";
+    } else {
+      query << "$l" << corr_idx << " (from: $w" << edge.to_wp 
+            << ", to: $w" << edge.from_wp << ") isa lighting-condition, "
+            << "has is-lit true, has is-dark false; ";
+    }
     corr_idx++;
   }
   
@@ -2279,10 +2373,10 @@ void NavigationController::updatePlanCostsIfConfigChanged()
   if (feasible_cfgs.empty()) return;
   
   // ═══════════════════════════════════════════════════════
-  // ✅ COOLDOWN TIMER: Prevent oscillation (10 sec delay)
+  // ✅ COOLDOWN TIMER: Prevent oscillation (6 sec delay)
   // ═══════════════════════════════════════════════════════
   static auto last_config_change = std::chrono::steady_clock::now();
-  static const int COOLDOWN_SECONDS = 6;  // 🔥 Adjust this (5-15 sec)
+  static const int COOLDOWN_SECONDS = 6;
   
   auto now = std::chrono::steady_clock::now();
   auto seconds_since_change = std::chrono::duration_cast<std::chrono::seconds>(
@@ -2325,7 +2419,7 @@ void NavigationController::updatePlanCostsIfConfigChanged()
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
       "⏸️ Config change BLOCKED - cooldown active (%ld/%d sec)",
       seconds_since_change, COOLDOWN_SECONDS);
-    return;  // ← Stay in current config!
+    return;
   }
   
   // ═══════════════════════════════════════════════════════
@@ -2333,85 +2427,185 @@ void NavigationController::updatePlanCostsIfConfigChanged()
   // ═══════════════════════════════════════════════════════
   last_config_change = std::chrono::steady_clock::now();
   
-  // (A) Low battery triggered the config switch → costs MUST be updated
+  auto feedback = executor_client_->getFeedBack();
+  int updated = 0, skipped = 0;
+  
+  // ═══════════════════════════════════════════════════════
+  // (A) Battery-triggered switch → Update costs WHERE SAFE
+  // ═══════════════════════════════════════════════════════
   if (battery_triggered) {
     RCLCPP_WARN(get_logger(),
-      "🔄 BATTERY-TRIGGERED switch: %s → %s, recalculating ALL future costs!",
+      "🔄 BATTERY-TRIGGERED switch: %s → %s",
       current_config_.c_str(), new_config.c_str());
     
     current_config_ = new_config;
-    auto feedback = executor_client_->getFeedBack();
     
-    // Update ALL future actions to new config
-    for (size_t i = 0; i < current_plan_actions_.size() &&
-         i < feedback.action_execution_status.size(); i++) {
+    // ✅ FIX: Loop through plan actions, find their status in feedback
+    for (size_t i = 0; i < current_plan_actions_.size(); i++) {
       auto &pa = current_plan_actions_[i];
-      const auto &ae = feedback.action_execution_status[i];
+      
+      if (pa.from.empty() || pa.to.empty()) continue;  // Skip recharge
+      
+      // ✅ Find this action's status in executor feedback
+      bool is_completed = false;
+      bool is_future = false;
+      
+      for (const auto& ae : feedback.action_execution_status) {
+        bool matches = false;
+        
+        // Match by waypoints (not by index!)
+        if (pa.action_name == "move_lit" || pa.action_name == "move_dark") {
+          matches = (ae.arguments.size() >= 3 &&
+                     ae.arguments[1] == pa.from && 
+                     ae.arguments[2] == pa.to);
+        }
+        
+        if (matches) {
+          if (ae.status == plansys2_msgs::msg::ActionExecutionInfo::SUCCEEDED) {
+            is_completed = true;
+            break;
+          }
+          if (ae.status == plansys2_msgs::msg::ActionExecutionInfo::NOT_EXECUTED ||
+              ae.status == plansys2_msgs::msg::ActionExecutionInfo::EXECUTING) {
+            is_future = true;
+            break;
+          }
+        }
+      }
       
       // Skip completed actions
-      if (ae.status == plansys2_msgs::msg::ActionExecutionInfo::SUCCEEDED) {
+      if (is_completed) {
         continue;
       }
       
-      // Update future (not yet completed) actions
-      if (ae.status == plansys2_msgs::msg::ActionExecutionInfo::NOT_EXECUTED ||
-          ae.status == plansys2_msgs::msg::ActionExecutionInfo::EXECUTING) {
-        if (pa.from.empty() || pa.to.empty()) continue;  // Skip recharge
-        
-        auto key = std::make_tuple(pa.from, pa.to, new_config);
-        if (cost_map_.count(key)) {
-          double old_cost = pa.cost;
-          pa.cost = cost_map_[key];
-          pa.config = new_config;
-          
-          RCLCPP_INFO(get_logger(),
-            "  [%zu] Updated %s: %s→%s cost: %.2f → %.2f",
-            i, pa.action_name.c_str(), pa.from.c_str(), pa.to.c_str(),
-            old_cost, pa.cost);
-        }
+      // Only update future actions
+      if (!is_future) {
+        continue;
       }
-    }
-    return;  // Finished battery-triggered update
-  }
-  
-  // (B) Corridor-width-triggered switch → ALLOW CONFIG CHANGE but *SKIP* cost updates
-  RCLCPP_INFO(get_logger(),
-    "🛡️ WIDTH-TRIGGERED switch: %s → %s (NO cost update, as plan already includes true costs)",
-    current_config_.c_str(), new_config.c_str());
-  
-  // Apply config change
-  current_config_ = new_config;
-  auto feedback = executor_client_->getFeedBack();
-  
-  // Update ALL future actions to new config
-  for (size_t i = 0; i < current_plan_actions_.size() && 
-       i < feedback.action_execution_status.size(); i++) {
-    auto &pa = current_plan_actions_[i];
-    const auto &ae = feedback.action_execution_status[i];
-    
-    // Skip completed actions
-    if (ae.status == plansys2_msgs::msg::ActionExecutionInfo::SUCCEEDED) {
-      continue;
-    }
-    
-    // Update future actions
-    if (ae.status == plansys2_msgs::msg::ActionExecutionInfo::NOT_EXECUTED ||
-        ae.status == plansys2_msgs::msg::ActionExecutionInfo::EXECUTING) {
-      if (pa.from.empty() || pa.to.empty()) continue;  // Skip recharge
       
+      // ✅ CORRIDOR CONSTRAINT CHECK: Don't use high_speed in dark corridors
+      if (pa.action_name == "move_dark" && new_config == "high_speed_config") {
+        skipped++;
+        RCLCPP_WARN(get_logger(),
+          "  [%zu] ⚠️ KEPT %s: %s→%s (%s) - dark corridor blocks high_speed",
+          i, pa.action_name.c_str(), pa.from.c_str(), pa.to.c_str(),
+          pa.config.c_str());
+        continue;
+      }
+      
+      // Check if cost exists for this corridor+config combination
       auto key = std::make_tuple(pa.from, pa.to, new_config);
       if (cost_map_.count(key)) {
         double old_cost = pa.cost;
         pa.cost = cost_map_[key];
         pa.config = new_config;
+        updated++;
         
-        RCLCPP_INFO(get_logger(), 
-          "  [%zu] Updated %s: %s→%s cost: %.2f → %.2f",
-          i, pa.action_name.c_str(), pa.from.c_str(), pa.to.c_str(), 
-          old_cost, pa.cost);
+        RCLCPP_INFO(get_logger(),
+          "  [%zu] ✅ Updated %s: %s→%s (%s) cost: %.2f → %.2f",
+          i, pa.action_name.c_str(), pa.from.c_str(), pa.to.c_str(),
+          new_config.c_str(), old_cost, pa.cost);
+      } else {
+        skipped++;
+        RCLCPP_WARN(get_logger(),
+          "  [%zu] ⚠️ KEPT %s: %s→%s (%s) - no cost for new config",
+          i, pa.action_name.c_str(), pa.from.c_str(), pa.to.c_str(),
+          pa.config.c_str());
       }
     }
+    
+    RCLCPP_INFO(get_logger(), 
+      "📊 Battery-triggered update: %d updated, %d kept original",
+      updated, skipped);
+    return;
   }
+  
+  // ═══════════════════════════════════════════════════════
+  // (B) Corridor-triggered switch → Update costs WHERE SAFE
+  // ═══════════════════════════════════════════════════════
+  RCLCPP_INFO(get_logger(),
+    "🛡️ CORRIDOR-TRIGGERED switch: %s → %s",
+    current_config_.c_str(), new_config.c_str());
+  
+  current_config_ = new_config;
+  
+  // ✅ FIX: Loop through plan actions, find their status in feedback
+  for (size_t i = 0; i < current_plan_actions_.size(); i++) {
+    auto &pa = current_plan_actions_[i];
+    
+    if (pa.from.empty() || pa.to.empty()) continue;  // Skip recharge
+    
+    // ✅ Find this action's status in executor feedback
+    bool is_completed = false;
+    bool is_future = false;
+    
+    for (const auto& ae : feedback.action_execution_status) {
+      bool matches = false;
+      
+      // Match by waypoints (not by index!)
+      if (pa.action_name == "move_lit" || pa.action_name == "move_dark") {
+        matches = (ae.arguments.size() >= 3 &&
+                   ae.arguments[1] == pa.from && 
+                   ae.arguments[2] == pa.to);
+      }
+      
+      if (matches) {
+        if (ae.status == plansys2_msgs::msg::ActionExecutionInfo::SUCCEEDED) {
+          is_completed = true;
+          break;
+        }
+        if (ae.status == plansys2_msgs::msg::ActionExecutionInfo::NOT_EXECUTED ||
+            ae.status == plansys2_msgs::msg::ActionExecutionInfo::EXECUTING) {
+          is_future = true;
+          break;
+        }
+      }
+    }
+    
+    // Skip completed actions
+    if (is_completed) {
+      continue;
+    }
+    
+    // Only update future actions
+    if (!is_future) {
+      continue;
+    }
+    
+    // ✅ CORRIDOR CONSTRAINT CHECK: Don't use high_speed in dark corridors
+    if (pa.action_name == "move_dark" && new_config == "high_speed_config") {
+      skipped++;
+      RCLCPP_WARN(get_logger(),
+        "  [%zu] ⚠️ KEPT %s: %s→%s (%s) - dark corridor blocks high_speed",
+        i, pa.action_name.c_str(), pa.from.c_str(), pa.to.c_str(),
+        pa.config.c_str());
+      continue;
+    }
+    
+    // Check if cost exists for this corridor+config combination
+    auto key = std::make_tuple(pa.from, pa.to, new_config);
+    if (cost_map_.count(key)) {
+      double old_cost = pa.cost;
+      pa.cost = cost_map_[key];
+      pa.config = new_config;
+      updated++;
+      
+      RCLCPP_INFO(get_logger(), 
+        "  [%zu] ✅ Updated %s: %s→%s (%s) cost: %.2f → %.2f",
+        i, pa.action_name.c_str(), pa.from.c_str(), pa.to.c_str(),
+        new_config.c_str(), old_cost, pa.cost);
+    } else {
+      skipped++;
+      RCLCPP_WARN(get_logger(),
+        "  [%zu] ⚠️ KEPT %s: %s→%s (%s) - no cost for new config",
+        i, pa.action_name.c_str(), pa.from.c_str(), pa.to.c_str(),
+        pa.config.c_str());
+    }
+  }
+  
+  RCLCPP_INFO(get_logger(), 
+    "📊 Corridor-triggered update: %d updated, %d kept original",
+    updated, skipped);
 }
 
 double NavigationController::queryCorridorWidth(
@@ -2455,11 +2649,54 @@ double NavigationController::queryCorridorWidth(
   return 2.0;
 }
 
+bool NavigationController::queryCorridorLighting(
+    const std::string& from_wp, 
+    const std::string& to_wp)
+{
+  auto req = std::make_shared<ros_typedb_msgs::srv::Query::Request>();
+  req->query_type = "fetch";
+  req->query = 
+    "match "
+    "$l (from: $w1, to: $w2) isa lighting-condition, has is-dark $dark; "
+    "$w1 has waypoint-name '" + from_wp + "'; "
+    "$w2 has waypoint-name '" + to_wp + "'; "
+    "$l has is-dark $dark; "
+    "fetch $dark;";
+  
+  auto fut = typedb_query_cli_->async_send_request(req);
+  if (fut.wait_for(500ms) != std::future_status::ready) {
+    RCLCPP_WARN(get_logger(), "Timeout querying corridor %s→%s lighting", 
+      from_wp.c_str(), to_wp.c_str());
+    return false;  // Default: assume lit
+  }
+  
+  auto resp = fut.get();
+  if (!resp->success || resp->results.empty()) {
+    RCLCPP_WARN(get_logger(), "No lighting data for corridor %s→%s", 
+      from_wp.c_str(), to_wp.c_str());
+    return false;  // Default: assume lit
+  }
+  
+  for (const auto &row : resp->results) {
+    for (const auto &attr : row.attributes) {
+      if (attr.name == "dark") {
+        bool is_dark = attr.value.bool_value;
+        RCLCPP_INFO(get_logger(), "🌙 Corridor %s→%s: %s", 
+          from_wp.c_str(), to_wp.c_str(), is_dark ? "DARK" : "LIT");
+        return is_dark;
+      }
+    }
+  }
+  
+  return false;  // Default: assume lit
+}
+
 void NavigationController::publishCorridorSafety(
     const std::string& from_wp,
     const std::string& to_wp)
 {
   double width = queryCorridorWidth(from_wp, to_wp);
+  bool is_dark = queryCorridorLighting(from_wp, to_wp);  // ✅ ADD THIS
   
   // Publish to ROSA via /diagnostics
   auto diag_msg = std::make_unique<diagnostic_msgs::msg::DiagnosticArray>();
@@ -2470,17 +2707,24 @@ void NavigationController::publishCorridorSafety(
   status.message = "attribute measurement";
   status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
   
-  diagnostic_msgs::msg::KeyValue kv;
-  kv.key = "current-corridor-width";
-  kv.value = std::to_string(width);
-  status.values.push_back(kv);
+  // Width
+  diagnostic_msgs::msg::KeyValue kv_width;
+  kv_width.key = "current-corridor-width";
+  kv_width.value = std::to_string(width);
+  status.values.push_back(kv_width);
+  
+  // ✅ ADD: Lighting level (1.0 = lit, 0.0 = dark)
+  diagnostic_msgs::msg::KeyValue kv_light;
+  kv_light.key = "current-lighting-level";
+  kv_light.value = is_dark ? "0" : "1"; 
+  status.values.push_back(kv_light);
   
   diag_msg->status.push_back(status);
   diagnostics_pub_->publish(std::move(diag_msg));
   
   RCLCPP_INFO(get_logger(), 
-    "✅ Published corridor-width=%.2fm (%s→%s) to ROSA", 
-    width, from_wp.c_str(), to_wp.c_str());
+    "✅ Published corridor safety: width=%.2fm, lighting=%s (%s→%s)", 
+    width, is_dark ? "DARK" : "LIT", from_wp.c_str(), to_wp.c_str());
 }
 
 void NavigationController::updateSafetyContext()
@@ -2599,26 +2843,26 @@ void NavigationController::fetch_component_states()
   req->query_type = "fetch";
   req->query = 
     "match "
-    "$c isa Component, has component-name $name, has is-active $active; "
-    "fetch $name; $active;";
+    "$c isa Component, has component-name $name, has component-status $status; "
+    "fetch $name; $status;";  // ← Changed from is-active to component-status
 
   auto fut = typedb_query_cli_->async_send_request(req);
-  if (fut.wait_for(500ms) != std::future_status::ready) {
-    RCLCPP_WARN(get_logger(), "Timeout querying component states");
-    return;
-  }
+  if (fut.wait_for(500ms) != std::future_status::ready) return;
   
   auto resp = fut.get();
   if (!resp->success) return;
 
   for (const auto &row : resp->results) {
     std::string name;
-    bool active = true;
+    std::string status = "feasible";  // ← Changed from bool to string
     
     for (const auto &attr : row.attributes) {
       if (attr.name == "name") name = attr.value.string_value;
-      if (attr.name == "active") active = attr.value.bool_value;
+      if (attr.name == "status") status = attr.value.string_value;  // ← STRING!
     }
+    
+    // ✅ Check if status is 'unfeasible' or 'failure'
+    bool active = (status != "unfeasible" && status != "failure");
     
     if (name == "perception_node") {
       perception_active_ = active;
@@ -2636,6 +2880,13 @@ void NavigationController::fetch_component_states()
 
 void NavigationController::step()
 {
+  plansys2_msgs::msg::Node batt_node;
+  batt_node.node_type = plansys2_msgs::msg::Node::FUNCTION;
+  batt_node.name = "battery-level";
+  batt_node.value = battery_level_;  // Real battery from monitor
+  
+  plansys2::Function batt(batt_node);
+  problem_expert_->updateFunction(batt);
   if (battery_level_ <= 0.0) {
     RCLCPP_ERROR(get_logger(), 
       "💀 BATTERY DEPLETED (%.1f%%)! Mission failed!", battery_level_);
@@ -3189,14 +3440,14 @@ void NavigationController::step()
           
           diagnostic_msgs::msg::KeyValue kv_reason;
           kv_reason.key = "adaptation-reason";
-          kv_reason.value = "planned_corridor_constraint";
+          kv_reason.value = "planned_safety_constraint";
           monitor_status.values.push_back(kv_reason);
           
           monitor_msg->status.push_back(monitor_status);
           monitoring_pub_->publish(std::move(monitor_msg));
           
           RCLCPP_INFO(get_logger(), 
-            "✅ Published config to ROSA: %s (reason: planned_corridor_constraint)",
+            "✅ Published config to ROSA: %s (reason: planned_safety_constraint)",
             current_config_.c_str());
           
           // Trigger ROSA to apply it
