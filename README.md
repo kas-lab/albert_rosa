@@ -1,109 +1,272 @@
-Readme below will be updated soon. This is not the current readme.
+# Proactive Self-Adaptation in Autonomous Mobile Robots via Predictive Feasibility Reasoning
 
+**MSc Thesis - Mohamed Msallak - TU Delft - January 2025**
 
-# Graph-like navigation
-Repository with an example use case of a robot navigating in a graph-like environment.
+## Overview
 
-Based on the use case from [Software architecture and task plan co-adaptation for mobile service robots](https://dl.acm.org/doi/pdf/10.1145/3387939.3391591) and adapted to the RoboCup@Home scenario.
+Implementation of a proactive self-adaptation framework for energy-constrained autonomous mobile robots. The system extends ROSA with rolling-horizon battery prediction and integrates PlanSys2 for symbolic task planning, enabling anticipatory task-and-architecture co-adaptation.
 
-## Install
+**Key features:**
+- Rolling-horizon energy prediction over upcoming navigation actions
+- Proactive configuration switching and recharge planning
+- Benchmark evaluation across procedurally generated environments
+- Comparison with reactive threshold-based baseline
 
-This step is only needed if you want to make changes to the project, if you just want to run it skip to [Running](##Running)
+⚠️ **Compatibility Notice:** This system has been developed and tested exclusively on **ROS 2 Humble**. Compatibility with other ROS 2 distributions is not guaranteed.
 
-```Bash
-mkdir -p ~/navigation_ws/src
-cd ~/navigation_ws/src
-git clone https://github.com/kas-lab/navigation_graph_map.git
+## Installation
+
+### Prerequisites
+
+This project builds on the ROSA framework. Follow ROSA installation instructions:
+- **ROSA repository:** https://github.com/kas-lab/rosa
+
+Additional dependencies:
+- ROS 2 Humble
+- PlanSys2
+- TypeDB 2.x
+- Nav2 navigation stack
+
+### Build
+```bash
+mkdir -p ~/ros2_ws/src
+cd ~/ros2_ws/src
+git clone [this-repo]
+cd ~/ros2_ws
+colcon build
+source install/setup.bash
 ```
 
-### Docker setup
+## Running the System
 
-This step is only needed if you want to make changes to the project, if you just want to run it skip to [Running](##Running)
-```Bash
-cd ~/navigation_ws/src/navigation_graph_map/
-docker build -t navigation .
-```
+### Prerequisites for All Runs
 
-## Running
-
-### Simulation
-
-Start docker container:
-```Bash
-docker run -it --rm -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:ro ghcr.io/kas-lab/navigation_graph_map:main
-```
-
-Then run:
-```Bash
-ros2 launch navigation_simulation simulation.launch.py
-```
-
-**Troubleshoot:** The first time you start the simulation, gazebo downloads some stuff from the internet so it might take a while for it to start. Sometimes, it doesn't work on the first run. In that case, stop the launch (ctrl + c) but keep the container running, then start the simulation again.
-
-### Planning
-
-In another terminal:
-```Bash
-docker run -it --rm -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:ro ghcr.io/kas-lab/navigation_graph_map:main
-```
-
-```Bash
-ros2 launch navigation_task_plan navigate_task_plan.launch.py
-```
-
-### ROSA
-
-In another terminal:
-```Bash
-docker run -it --rm -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:ro ghcr.io/kas-lab/navigation_graph_map:main
-```
-
-Start typedb server
-```Bash
+**1. Start TypeDB Server** (Terminal 1)
+```bash
 typedb server &
 ```
 
-In the same terminal launch rosa:
-```Bash
+**2. Start Battery Monitor** (Terminal 2)
+
+For benchmark mode:
+```bash
+ros2 run navigation_battery battery_monitor --ros-args -p benchmark_mode:=true
+```
+
+For single navigation runs:
+```bash
+ros2 run navigation_battery battery_monitor --ros-args -p benchmark_mode:=false
+```
+
+⚠️ **Important:** The battery monitor must be running before launching the navigation system.
+
+---
+
+## Running the Benchmark
+
+### Proactive Adaptation (Terminal 3)
+```bash
+ros2 run navigation_planner benchmark_tracker
+```
+
+### Reactive Adaptation Baseline (Terminal 3)
+```bash
+ros2 launch navigation_task_plan navigate_task_plan_reactive.launch.py \
+  scenario_difficulty:=easy \
+  benchmark_mode:=true \
+  max_benchmark_runs:=100
+```
+
+**Benchmark Parameters:**
+- `scenario_difficulty:=` - Map difficulty: `easy`, `medium`, or `hard`
+- `benchmark_mode:=` - Set to `true` for automated benchmark runs
+- `max_benchmark_runs:=` - Number of episodes to run
+- `enable_debug_in_benchmark:=` - Set to `true` for debug output
+
+### Results
+
+Benchmark results are saved to:
+- `benchmark_results/` - Metrics, success rates, configuration usage
+- `real_sim_results/` - Simulation validation data
+
+---
+
+## Running Single Navigation Episodes
+
+Useful for testing and debugging individual scenarios.
+
+### Single Run - Proactive Adaptation
+
+**Terminal 1:** TypeDB
+```bash
+typedb server &
+```
+
+**Terminal 2:** Battery Monitor
+```bash
+ros2 run navigation_battery battery_monitor --ros-args -p benchmark_mode:=false
+```
+
+**Terminal 3:** Navigation (Proactive)
+```bash
+ros2 launch navigation_task_plan navigate_task_plan_horizon.launch.py
+```
+
+### Single Run - Reactive Adaptation
+
+**Terminal 1:** TypeDB
+```bash
+typedb server &
+```
+
+**Terminal 2:** Battery Monitor
+```bash
+ros2 run navigation_battery battery_monitor --ros-args -p benchmark_mode:=false
+```
+
+**Terminal 3:** Navigation (Reactive)
+```bash
+ros2 launch navigation_task_plan navigate_task_plan_reactive.launch.py \
+  scenario_difficulty:=easy \
+  benchmark_mode:=false \
+  max_benchmark_runs:=1 \
+  enable_debug_in_benchmark:=false
+```
+
+---
+
+## Repository Structure
+```
+├── navigation_kb/              # TypeDB knowledge base
+│   ├── config/
+│   │   ├── schema.tql         # KB schema definition
+│   │   └── data.tql           # Static domain knowledge
+│   └── launch/                # KB launch files
+│
+├── navigation_rosa/            # ROSA integration
+│   ├── config/
+│   │   ├── navigation_rosa.tql          # Proactive constraints
+│   │   └── navigation_rosa_reactive.tql # Reactive constraints
+│   └── launch/                # ROSA launch files
+│
+├── navigation_task_plan/      # PlanSys2 task planning
+│   ├── pddl/
+│   │   ├── domain_sas.pddl            # PDDL domain (proactive)
+│   │   └── domain_sas_reactive.pddl   # PDDL domain (reactive)
+│   ├── src/
+│   │   ├── navigate_horizon.cpp       # Proactive controller
+│   │   └── navigate_reactive.cpp      # Reactive controller
+│   └── launch/
+│       └── benchmark_with_map_regen.launch.py  # Main benchmark
+│
+├── navigation_planner/         # Benchmark & map generation
+│   └── navigation_planner/
+│       ├── benchmark_tracker.py       # Metrics collection
+│       └── map_generator.py           # Procedural map generation
+│
+├── navigation_battery/         # Battery monitoring
+│   └── navigation_battery/
+│       └── battery_monitor.py         # Battery discharge model
+│
+├── benchmark_results/          # Benchmark output data
+└── real_sim_results/           # Simulation validation data
+```
+
+## Key Configuration Files
+
+### Proactive Thresholds
+Located in `navigation_rosa/config/navigation_rosa.tql`
+
+### Reactive Thresholds
+Located in `navigation_rosa/config/navigation_rosa_reactive.tql`
+
+### PDDL Domain
+- Proactive: `navigation_task_plan/pddl/domain_sas.pddl`
+- Reactive: `navigation_task_plan/pddl/domain_sas_reactive.pddl`
+
+### Map Difficulty Parameters
+Configured in benchmark launch file parameters:
+- `easy`: Dense connectivity, multiple charging stations
+- `medium`: Moderate connectivity, limited chargers
+- `hard`: Sparse connectivity, clustered chargers
+
+---
+
+## Starting ROSA Independently
+
+If you need to launch ROSA separately (not automatically started by navigation launch):
+
+### ROSA (Proactive)
+```bash
+typedb server &
 ros2 launch navigation_rosa navigation_rosa.launch.py
 ```
 
-### Trigger adaptation
-In another terminal:
-```Bash
-docker run -it --rm -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:ro ghcr.io/kas-lab/navigation_graph_map:main
+### ROSA (Reactive Baseline)
+```bash
+typedb server &
+ros2 launch navigation_rosa navigation_rosa_reactive.launch.py
 ```
 
-Publish battery level:
-```Bash
-ros2 topic pub /diagnostics diagnostic_msgs/msg/DiagnosticArray {status:['{message: "QA status", values:[{key: battery, value: 0.5}]}']}
+---
+
+## Troubleshooting
+
+### Battery Monitor Not Publishing
+Check that battery monitor is running:
+```bash
+ros2 node list | grep battery
 ```
 
-### Check adaptation
-
-```Bash
-ros2 param get /controller_server FollowPath.max_vel_x
+Check battery topic:
+```bash
+ros2 topic echo /battery_level
 ```
 
-```Bash
-ros2 param get /controller_server FollowPath.max_vel_theta
+### TypeDB Connection Issues
+Verify TypeDB server is running:
+```bash
+ps aux | grep typedb
 ```
 
-### Query example
-
-ROSA query:
-```Bash
-ros2 service call /rosa_kb/query ros_typedb_msgs/srv/Query "{query_type: 'fetch', query: 'match \$b isa QualityAttribute, has attribute-name \"battery\"; fetch \$b:attribute;'}"
+Restart if needed:
+```bash
+pkill typedb
+typedb server &
 ```
 
-Navigation kb query:
-```Bash
-ros2 service call /ros_typedb/query ros_typedb_msgs/srv/Query "{query_type: 'fetch', query: 'match
-\$o isa object, has object-name \"cup\";
-(object:\$o, room:\$r) isa delivery-location;
-\$rg isa room, has room-name \"garage\";
-\$path (room:\$rg, room:\$r) isa path;
-\$pose (physical_thing:\$r) isa pose2d;
-fetch
-\$pose:x, y, theta;'}"
+### Benchmark Not Starting
+Ensure all prerequisites are running:
+1. TypeDB server
+2. Battery monitor in correct mode
+3. Check launch file parameters
+
+---
+
+## Repository Status
+
+**Note:** This repository contains research code developed during an MSc thesis project. The implementation prioritizes experimental validation and rapid iteration over production-level software engineering. The `defense-submission` branch contains the working system used for thesis evaluation.
+
+## Thesis
+
+**Defense:** January 27, 2025  
+**Supervisors:** Gustavo Rezende Silva, Carlos Hernández Corbato  
+**Document:** [Available after defense]
+
+## Citation
+```bibtex
+@mastersthesis{msallak2025proactive,
+  title={Proactive Self-Adaptation in Autonomous Mobile Robots via Predictive Feasibility Reasoning},
+  author={Msallak, Mohamed},
+  year={2025},
+  school={Delft University of Technology}
+}
 ```
+
+## Contact
+
+Mohamed Msallak - M.Msallak@student.tudelft.nl
+
+## License
+
+See [LICENSE](LICENSE) file for details.
