@@ -146,11 +146,23 @@ $cc_degraded (component: $c_controller_server,
   has priority 3.0;
 
 
+# $lighting_qa isa QualityAttribute,
+#   has measure-name "current-lighting-level",
+#   has description "Lighting quality: 1.0 = lit, 0.0 = dark";
+
+# # Initial lighting measurement
+# (measured-attribute: $lighting_qa) isa measurement,
+#   has measurement-value 1.0,
+#   has latest true;
+
+# # === Constraint: High-speed requires good lighting ===
+# (constraint: $lighting_qa, constrained: $cc_high_speed)
+#   isa constraint,
+#   has attribute-value 0.5,      # Requires lighting > 0.5
+#   has constraint-operator ">";
 ###############################################################################
 # REACTIVE BATTERY-LEVEL CONSTRAINTS (NO PREDICTED BATTERY)
 ###############################################################################
-
-
 
 (constraint: $battery_level_qa, constrained: $a_move_to_recharge)
   isa constraint,
@@ -160,14 +172,14 @@ $cc_degraded (component: $c_controller_server,
 # move_lit requires >= 5%
 (constraint: $battery_level_qa, constrained: $a_move_lit)
   isa constraint,
-  has attribute-value 5.0,
+  has attribute-value 15.0,
   has constraint-operator ">=";
 
 # # move_dark requires >= 5%
-# (constraint: $battery_level_qa, constrained: $a_move_dark)
-#   isa constraint,
-#   has attribute-value 5.0,
-#   has constraint-operator ">=";
+(constraint: $battery_level_qa, constrained: $a_move_dark)
+  isa constraint,
+  has attribute-value 15.0,
+  has constraint-operator ">=";
 
 
 # HIGH-SPEED ALLOWED when battery >= 70%
@@ -179,13 +191,13 @@ $cc_degraded (component: $c_controller_server,
 # LOW-SPEED for 40%–70%
 (constraint: $battery_level_qa, constrained: $cc_low_speed)
   isa constraint,
-  has attribute-value 20.0,
+  has attribute-value 25.0,
   has constraint-operator ">=";
 
-(constraint: $battery_level_qa, constrained: $cc_low_speed)
-  isa constraint,
-  has attribute-value 30.0,
-  has constraint-operator "<";
+# (constraint: $battery_level_qa, constrained: $cc_low_speed)
+#   isa constraint,
+#   has attribute-value 30.0,
+#   has constraint-operator "<";
 
 # DEGRADED below 40%
 (constraint: $battery_level_qa, constrained: $cc_degraded)
@@ -197,12 +209,12 @@ $cc_degraded (component: $c_controller_server,
 # COMPONENT REACTIONS (reactive)
 (constraint: $battery_level_qa, constrained: $c_perception)
   isa constraint,
-  has attribute-value 25.0,
+  has attribute-value 20.0,
   has constraint-operator ">=";
 
 (constraint: $battery_level_qa, constrained: $c_arm)
   isa constraint,
-  has attribute-value 30.0,
+  has attribute-value 25.0,
   has constraint-operator ">=";
 
 
@@ -225,92 +237,356 @@ $cc_degraded (component: $c_controller_server,
   has attribute-value 0.5,
   has constraint-operator ">=";
 
-# === WAYPOINTS ===
-$wp0 isa waypoint, has waypoint-name "wp_0", has risk-level "safe";
-$wp1 isa waypoint, has waypoint-name "wp_1", has has-charging-station true, has risk-level "safe";
-$wp2 isa waypoint, has waypoint-name "wp_2", has risk-level "safe";
-$wp3 isa waypoint, has waypoint-name "wp_3", has has-charging-station true, has risk-level "moderate";
-$wp4 isa waypoint, has waypoint-name "wp_4", has risk-level "safe";
-$wp5 isa waypoint, has waypoint-name "wp_5", has risk-level "high";  # Narrow area
-$wp6 isa waypoint, has waypoint-name "wp_6", has risk-level "high";  # Congested area
-$wp7 isa waypoint, has waypoint-name "wp_7", has has-charging-station true, has risk-level "safe";
-$wp8 isa waypoint, has waypoint-name "wp_8", has risk-level "safe";
-$wp9 isa waypoint, has waypoint-name "wp_9", has has-charging-station true, has risk-level "safe";
+# === WAYPOINTS (EXTENDED) ===
+$wp0  isa waypoint, has waypoint-name "wp_0",  has risk-level "safe";
+$wp1  isa waypoint, has waypoint-name "wp_1",  has risk-level "safe";
+$wp2  isa waypoint, has waypoint-name "wp_2",  has risk-level "safe";
+$wp3  isa waypoint, has waypoint-name "wp_3",  has has-charging-station true,  has risk-level "moderate";
+$wp4  isa waypoint, has waypoint-name "wp_4",  has risk-level "safe";
+$wp5  isa waypoint, has waypoint-name "wp_5",  has risk-level "high";      # Narrow area
+$wp6  isa waypoint, has waypoint-name "wp_6",  has risk-level "high";      # Congested area
+$wp7  isa waypoint, has waypoint-name "wp_7",  has has-charging-station true,  has risk-level "safe";
+$wp8  isa waypoint, has waypoint-name "wp_8",  has risk-level "safe";
+$wp9  isa waypoint, has waypoint-name "wp_9",  has has-charging-station true,  has risk-level "safe";
 $wp10 isa waypoint, has waypoint-name "wp_10", has risk-level "safe";
 
-# === CORRIDORS ===
-# === CORRIDORS WITH SAFETY DATA ===
-$c01 (from: $wp0, to: $wp1) isa corridor, 
-  has distance 2.5,
-  has corridor-width 1.8,      # ← Wide, safe corridor
-  has obstacle-density "low",
-  has max-safe-speed 2.0;
+# New waypoints
+$wp11 isa waypoint, has waypoint-name "wp_11", has risk-level "safe";
+$wp12 isa waypoint, has waypoint-name "wp_12", has risk-level "moderate";
+$wp13 isa waypoint, has waypoint-name "wp_13", has has-charging-station true, has risk-level "safe";     # NEW CHARGER
+$wp14 isa waypoint, has waypoint-name "wp_14", has risk-level "safe";
+$wp15 isa waypoint, has waypoint-name "wp_15", has risk-level "high";       # Narrow-ish / constrained
+$wp16 isa waypoint, has waypoint-name "wp_16", has risk-level "moderate";
+$wp17 isa waypoint, has waypoint-name "wp_17", has risk-level "safe";
+$wp18 isa waypoint, has waypoint-name "wp_18", has has-charging-station true, has risk-level "safe";    # NEW CHARGER
+$wp19 isa waypoint, has waypoint-name "wp_19", has risk-level "safe";
+$wp20 isa waypoint, has waypoint-name "wp_20", has risk-level "safe";
 
-$c12 (from: $wp1, to: $wp2) isa corridor, 
+
+## === CORRIDORS (EXTENDED TO 20) ===
+$c01 (from: $wp0, to: $wp1) isa corridor,
   has distance 2.5,
   has corridor-width 1.8,
   has obstacle-density "low",
   has max-safe-speed 2.0;
 
-$c23 (from: $wp2, to: $wp3) isa corridor, 
+$c10 (from: $wp1, to: $wp0) isa corridor,
   has distance 2.5,
-  has corridor-width 1.8,      # ← Medium width
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+
+$c12 (from: $wp1, to: $wp2) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+$c21 (from: $wp2, to: $wp1) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+
+$c23 (from: $wp2, to: $wp3) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.8,
   has obstacle-density "medium",
   has max-safe-speed 1.5;
 
-$c34 (from: $wp3, to: $wp4) isa corridor, 
+$c32 (from: $wp3, to: $wp2) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "medium",
+  has max-safe-speed 1.5;
+
+
+$c34 (from: $wp3, to: $wp4) isa corridor,
   has distance 2.5,
   has corridor-width 1.8,
   has obstacle-density "low",
   has max-safe-speed 1.8;
 
-$c45 (from: $wp4, to: $wp5) isa corridor, 
+$c43 (from: $wp4, to: $wp3) isa corridor,
   has distance 2.5,
-  has corridor-width 0.9,      # ← NARROW! High-speed unsafe
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 1.8;
+
+
+$c45 (from: $wp4, to: $wp5) isa corridor,
+  has distance 2.5,
+  has corridor-width 0.9,
   has obstacle-density "high",
   has max-safe-speed 0.8;
 
-$c56 (from: $wp5, to: $wp6) isa corridor, 
+$c54 (from: $wp5, to: $wp4) isa corridor,
   has distance 2.5,
-  has corridor-width 0.8,      # ← VERY NARROW! Only degraded mode
+  has corridor-width 0.9,
+  has obstacle-density "high",
+  has max-safe-speed 0.8;
+
+
+$c56 (from: $wp5, to: $wp6) isa corridor,
+  has distance 2.5,
+  has corridor-width 0.8,
   has obstacle-density "high",
   has max-safe-speed 0.6;
 
-$c67 (from: $wp6, to: $wp7) isa corridor, 
+$c65 (from: $wp6, to: $wp5) isa corridor,
   has distance 2.5,
-  has corridor-width 1.7,      # ← Returning to normal
+  has corridor-width 0.8,
+  has obstacle-density "high",
+  has max-safe-speed 0.6;
+
+
+$c67 (from: $wp6, to: $wp7) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.7,
   has obstacle-density "medium",
   has max-safe-speed 1.0;
 
-$c78 (from: $wp7, to: $wp8) isa corridor, 
+$c76 (from: $wp7, to: $wp6) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.7,
+  has obstacle-density "medium",
+  has max-safe-speed 1.0;
+
+
+$c78 (from: $wp7, to: $wp8) isa corridor,
   has distance 2.5,
   has corridor-width 1.7,
   has obstacle-density "low",
   has max-safe-speed 1.5;
 
-$c89 (from: $wp8, to: $wp9) isa corridor, 
+$c87 (from: $wp8, to: $wp7) isa corridor,
   has distance 2.5,
-  has corridor-width 1.7,      # ← Wide again
+  has corridor-width 1.7,
+  has obstacle-density "low",
+  has max-safe-speed 1.5;
+
+
+$c89 (from: $wp8, to: $wp9) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.7,
   has obstacle-density "low",
   has max-safe-speed 2.0;
 
-$c910 (from: $wp9, to: $wp10) isa corridor, 
+$c98 (from: $wp9, to: $wp8) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.7,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+
+$c910 (from: $wp9, to: $wp10) isa corridor,
   has distance 2.5,
   has corridor-width 1.8,
   has obstacle-density "low",
   has max-safe-speed 2.0;
 
-# === LIGHTING CONDITIONS ===
-$light01  (from: $wp0,  to: $wp1)   isa lighting-condition, has is-lit true, has is-dark false;
-$light12  (from: $wp1,  to: $wp2)   isa lighting-condition, has is-lit true, has is-dark false;
-$light23  (from: $wp2,  to: $wp3)   isa lighting-condition, has is-lit true, has is-dark false;
-$light34  (from: $wp3,  to: $wp4)   isa lighting-condition, has is-lit true, has is-dark false;
-$light45  (from: $wp4,  to: $wp5)   isa lighting-condition, has is-lit true, has is-dark false;
-$light56  (from: $wp5,  to: $wp6)   isa lighting-condition, has is-lit true, has is-dark false;
-$light67  (from: $wp6,  to: $wp7)   isa lighting-condition, has is-lit true, has is-dark false;
-$light78  (from: $wp7,  to: $wp8)   isa lighting-condition, has is-lit true, has is-dark false;
-$light89  (from: $wp8,  to: $wp9)   isa lighting-condition, has is-lit true, has is-dark false;
-$light910 (from: $wp9,  to: $wp10)  isa lighting-condition, has is-lit true, has is-dark false;
+$c109 (from: $wp10, to: $wp9) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+
+# --- New corridors: wp_10 -> wp_20 (10 more) ---
+$c1011 (from: $wp10, to: $wp11) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+$c1110 (from: $wp11, to: $wp10) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+
+$c1112 (from: $wp11, to: $wp12) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.6,
+  has obstacle-density "medium",
+  has max-safe-speed 1.4;
+
+$c1211 (from: $wp12, to: $wp11) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.6,
+  has obstacle-density "medium",
+  has max-safe-speed 1.4;
+
+
+$c1213 (from: $wp12, to: $wp13) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.7,
+  has obstacle-density "low",
+  has max-safe-speed 1.8;
+
+$c1312 (from: $wp13, to: $wp12) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.7,
+  has obstacle-density "low",
+  has max-safe-speed 1.8;
+
+
+$c1314 (from: $wp13, to: $wp14) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+$c1413 (from: $wp14, to: $wp13) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+
+$c1415 (from: $wp14, to: $wp15) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.0,
+  has obstacle-density "high",
+  has max-safe-speed 0.9;
+
+$c1514 (from: $wp15, to: $wp14) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.0,
+  has obstacle-density "high",
+  has max-safe-speed 0.9;
+
+
+$c1516 (from: $wp15, to: $wp16) isa corridor,
+  has distance 2.5,
+  has corridor-width 0.85,
+  has obstacle-density "high",
+  has max-safe-speed 0.7;
+
+$c1615 (from: $wp16, to: $wp15) isa corridor,
+  has distance 2.5,
+  has corridor-width 0.85,
+  has obstacle-density "high",
+  has max-safe-speed 0.7;
+
+
+$c1617 (from: $wp16, to: $wp17) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.6,
+  has obstacle-density "medium",
+  has max-safe-speed 1.2;
+
+$c1716 (from: $wp17, to: $wp16) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.6,
+  has obstacle-density "medium",
+  has max-safe-speed 1.2;
+
+
+$c1718 (from: $wp17, to: $wp18) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.7,
+  has obstacle-density "low",
+  has max-safe-speed 1.6;
+
+$c1817 (from: $wp18, to: $wp17) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.7,
+  has obstacle-density "low",
+  has max-safe-speed 1.6;
+
+
+$c1819 (from: $wp18, to: $wp19) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+$c1918 (from: $wp19, to: $wp18) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+
+$c1920 (from: $wp19, to: $wp20) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+$c2019 (from: $wp20, to: $wp19) isa corridor,
+  has distance 2.5,
+  has corridor-width 1.8,
+  has obstacle-density "low",
+  has max-safe-speed 2.0;
+
+
+# === LIGHTING CONDITIONS (EXTENDED) ===
+$light01   (from: $wp0,  to: $wp1)   isa lighting-condition, has is-lit true, has is-dark false;
+$light10   (from: $wp1,  to: $wp0)   isa lighting-condition, has is-lit true, has is-dark false;
+
+$light12   (from: $wp1,  to: $wp2)   isa lighting-condition, has is-lit true, has is-dark false;
+$light21   (from: $wp2,  to: $wp1)   isa lighting-condition, has is-lit true, has is-dark false;
+
+$light23   (from: $wp2,  to: $wp3)   isa lighting-condition, has is-lit true, has is-dark false;
+$light32   (from: $wp3,  to: $wp2)   isa lighting-condition, has is-lit true, has is-dark false;
+
+$light34   (from: $wp3,  to: $wp4)   isa lighting-condition, has is-lit true, has is-dark false;
+$light43   (from: $wp4,  to: $wp3)   isa lighting-condition, has is-lit true, has is-dark false;
+
+$light45   (from: $wp4,  to: $wp5)   isa lighting-condition, has is-lit true, has is-dark false;
+$light54   (from: $wp5,  to: $wp4)   isa lighting-condition, has is-lit true, has is-dark false;
+
+$light56   (from: $wp5,  to: $wp6)   isa lighting-condition, has is-lit true, has is-dark false;
+$light65   (from: $wp6,  to: $wp5)   isa lighting-condition, has is-lit true, has is-dark false;
+
+$light67   (from: $wp6,  to: $wp7)   isa lighting-condition, has is-lit true, has is-dark false;
+$light76   (from: $wp7,  to: $wp6)   isa lighting-condition, has is-lit true, has is-dark false;
+
+$light78   (from: $wp7,  to: $wp8)   isa lighting-condition, has is-lit true, has is-dark false;
+$light87   (from: $wp8,  to: $wp7)   isa lighting-condition, has is-lit true, has is-dark false;
+
+$light89   (from: $wp8,  to: $wp9)   isa lighting-condition, has is-lit true, has is-dark false;
+$light98   (from: $wp9,  to: $wp8)   isa lighting-condition, has is-lit true, has is-dark false;
+
+$light910  (from: $wp9,  to: $wp10)  isa lighting-condition, has is-lit true, has is-dark false;
+$light109  (from: $wp10, to: $wp9)   isa lighting-condition, has is-lit true, has is-dark false;
+
+
+# --- New lighting entries (wp_10 <-> wp_20) ---
+$light1011 (from: $wp10, to: $wp11)  isa lighting-condition, has is-lit true, has is-dark false;
+$light1110 (from: $wp11, to: $wp10)  isa lighting-condition, has is-lit true, has is-dark false;
+
+$light1112 (from: $wp11, to: $wp12)  isa lighting-condition, has is-lit true, has is-dark false;
+$light1211 (from: $wp12, to: $wp11)  isa lighting-condition, has is-lit true, has is-dark false;
+
+$light1213 (from: $wp12, to: $wp13)  isa lighting-condition, has is-lit true, has is-dark false;
+$light1312 (from: $wp13, to: $wp12)  isa lighting-condition, has is-lit true, has is-dark false;
+
+$light1314 (from: $wp13, to: $wp14)  isa lighting-condition, has is-lit true, has is-dark false;
+$light1413 (from: $wp14, to: $wp13)  isa lighting-condition, has is-lit true, has is-dark false;
+
+$light1415 (from: $wp14, to: $wp15)  isa lighting-condition, has is-lit true, has is-dark false;
+$light1514 (from: $wp15, to: $wp14)  isa lighting-condition, has is-lit true, has is-dark false;
+
+$light1516 (from: $wp15, to: $wp16)  isa lighting-condition, has is-lit true, has is-dark false;
+$light1615 (from: $wp16, to: $wp15)  isa lighting-condition, has is-lit true, has is-dark false;
+
+$light1617 (from: $wp16, to: $wp17)  isa lighting-condition, has is-lit true, has is-dark false;
+$light1716 (from: $wp17, to: $wp16)  isa lighting-condition, has is-lit true, has is-dark false;
+
+$light1718 (from: $wp17, to: $wp18)  isa lighting-condition, has is-lit true, has is-dark false;
+$light1817 (from: $wp18, to: $wp17)  isa lighting-condition, has is-lit true, has is-dark false;
+
+$light1819 (from: $wp18, to: $wp19)  isa lighting-condition, has is-lit true, has is-dark false;
+$light1918 (from: $wp19, to: $wp18)  isa lighting-condition, has is-lit true, has is-dark false;
+
+$light1920 (from: $wp19, to: $wp20)  isa lighting-condition, has is-lit true, has is-dark false;
+$light2019 (from: $wp20, to: $wp19)  isa lighting-condition, has is-lit true, has is-dark false;
 
 # === GOAL ===
-$goal1 isa goal, has goal-name "wp_40";
+$goal1 isa goal, has goal-name "wp_15";
