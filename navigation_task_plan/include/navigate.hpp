@@ -236,7 +236,8 @@ protected:
   void triggerRecharge();
   void resumeNavigation();
   void publishBatteryMeasurement(double battery_level_, const std::string& reason = "battery_update");
-
+  std::chrono::steady_clock::time_point last_config_change_time_;  // ✅ NEW: Shared cooldown timer
+  const int CONFIG_CHANGE_COOLDOWN_SEC = 6;  // ✅ NEW: Cooldown constant
   // Monitoring & adaptation
   void batteryCallback(const sensor_msgs::msg::BatteryState::SharedPtr msg);
 
@@ -274,6 +275,7 @@ protected:
   void setSystemModeInKB(double mode);
   std::vector<std::string> getAvailableConfigsFromKB();
   void selectConfigurationInKB(const std::string &config_name);
+  bool queryCorridorLighting(const std::string& from_wp, const std::string& to_wp);
 
   // ──────────────── NEW: resume + cost calc support ────────────────
   // Read current wp from executor feedback (used when switching/restarting plans)
