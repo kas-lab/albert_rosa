@@ -62,7 +62,7 @@ class BatteryMonitor(Node):
 
         # Startup grace period
         self.grace_active = True
-        self.grace_duration = 3.0
+        self.grace_duration = 14.0
         self.grace_start = self.get_clock().now()
 
         # Post-charge grace
@@ -71,6 +71,7 @@ class BatteryMonitor(Node):
 
         # Timing
         self.last_time = self.get_clock().now()
+        self.prev_pose = None 
 
         if self.benchmark:
             random.seed(self.seed)
@@ -290,47 +291,21 @@ class BatteryMonitor(Node):
 
         # RECHARGING
         if self.recharging:
-            if self.benchmark:
-                # Instant recharge in benchmark mode
-                self.battery = 100.0
-                self.recharging = False
-                self.recharge_done = True
+            # ✅ CHANGE: Instant recharge in BOTH modes (was gradual in simulation)
+            self.battery = 100.0
+            self.recharging = False
+            self.recharge_done = True
 
-                self.post_charge_grace = True
-                self.post_charge_start = now
+            self.post_charge_grace = True
+            self.post_charge_start = now
 
-                done = Bool()
-                done.data = True
-                self.pub_recharge_done.publish(done)
+            done = Bool()
+            done.data = True
+            self.pub_recharge_done.publish(done)
 
-                self.get_logger().info("⚡ Instant recharge complete!")
-                self.publish(0.0)
-                return
-
-            else:
-                # Simulation, gradual charging
-                self.battery = min(100.0, self.battery + self.recharge_rate * dt)
-
-                if self.battery >= 100.0 and not self.recharge_done:
-                    # 🔥 NEW: Only trigger once
-                    self.recharging = False
-                    self.recharge_done = True
-
-                    # 🔥 NEW: Publish recharge complete
-                    done = Bool()
-                    done.data = True
-                    self.pub_recharge_done.publish(done)
-                    self.get_logger().info("⚡ Gradual recharge complete!")
-
-                    # Post-charge grace
-                    self.post_charge_grace = True
-                    self.post_charge_start = now
-
-                    self.publish(0.0)
-                    return
-
-                self.publish(0.0)
-                return
+            self.get_logger().info("⚡ Instant recharge complete!")
+            self.publish(0.0)
+            return
 
 
         # NORMAL DRAIN
@@ -350,11 +325,11 @@ class BatteryMonitor(Node):
         # ==============================================================
 
         if self.current_config == "high_speed_config":
-            base = 2.05          # → 4.10% per 2 sec (minimum)
-            spike_small = 0.40   # → 0.8% bump
-            spike_big = 0.75     # → 1.5% bump
-            p_big = 0.15         # 15% chance big spike
-            p_small = 0.55       # 55% chance small spike
+            base = 2.05          
+            spike_small = 0.40   
+            spike_big = 0.75     
+            p_big = 0.15         
+            p_small = 0.55       
         elif self.current_config == "low_speed_config":
             base = 1.05
             spike_small = 0.20
@@ -382,52 +357,90 @@ class BatteryMonitor(Node):
             spike = 0.0
 
         # ==============================================================
-        # SMALL RANDOM JITTER (never too big)
+        # SMALL RANDOM JITTER
         # ==============================================================
 
         jitter = random.uniform(-0.10, 0.20)
 
         # ==============================================================
-        # COMPUTE PER-SECOND DRAIN
+        # COMPUTE MOVEMENT DRAIN
         # ==============================================================
 
         drain_per_second = base + spike + jitter
-
-        # Clamp for safety (prevent 2% and 12% disasters)
         drain_per_second = min(max(drain_per_second, base), base + spike_big + 0.20)
+        
+        movement_drain = drain_per_second * dt
 
-        return drain_per_second * dt
+        # ==============================================================
+        # ✅ ADD COMPONENT DRAIN (like simulation mode)
+        # ==============================================================
+        
+        component_drain = 0.0
+        
+        # Perception: 0.16% per 2sec when ON
+        if self.perception:
+            component_drain += 0.08 * dt
+        
+        # Arm: 0.24% per 2sec when HIGH, 0.08% when LOW
+        if self.arm_level == "high":
+            component_drain += 0.12 * dt
+        elif self.arm_level == "low":
+            component_drain += 0.04 * dt
+        
+        return movement_drain + component_drain
 
     def simulation_drain(self, dt, dist):
+        """✅ CHANGE: Slightly more aggressive drain for faster simulations"""
         speed = dist / dt if dt > 0 else 0.0
 
         if speed < 0.01:
-            return self.rate_idle * dt
+            return self.rate_idle * dt * 1.5  # ✅ 1.5x idle (was 1x)
 
+        # ✅ Slightly higher base rates
         if self.current_config == "high_speed_config":
-            base = 0.5
+            base = 0.75  # ✅ Was 0.5
         elif self.current_config == "low_speed_config":
-            base = 0.3
+            base = 0.45  # ✅ Was 0.3
         else:
-            base = 0.2
+            base = 0.30  # ✅ Was 0.2
 
-        movement = base * dt * (1 + 0.3 * speed)
+        movement = base * dt * (1 + 0.5 * speed)  # ✅ 0.5 multiplier (was 0.3)
 
+        # ✅ Slightly higher component drain
         comp = 0.0
         if self.perception:
-            comp += 0.08 * (dt / 100)
+            comp += 0.12 * (dt / 100)  # ✅ Was 0.08
         if self.arm_level == "high":
-            comp += 0.12 * (dt / 100)
+            comp += 0.18 * (dt / 100)  # ✅ Was 0.12
         elif self.arm_level == "low":
-            comp += 0.04 * (dt / 100)
+            comp += 0.06 * (dt / 100)  # ✅ Was 0.04
 
         return movement + comp
 
     def get_distance(self):
+        """Calculate distance traveled since last call using TF."""
         try:
-            tr = self.tf_buffer.lookup_transform("odom", "base_link", rclpy.time.Time())
-            return 0.0  # simplified, unused for benchmark
-        except:
+            transform = self.tf_buffer.lookup_transform(
+                'odom', 'base_link', rclpy.time.Time())
+            x = transform.transform.translation.x
+            y = transform.transform.translation.y
+            current_pose = (x, y)
+
+            if self.prev_pose is not None:
+                dx = current_pose[0] - self.prev_pose[0]
+                dy = current_pose[1] - self.prev_pose[1]
+                distance = math.sqrt(dx*dx + dy*dy)
+            else:
+                distance = 0.0
+
+            self.prev_pose = current_pose
+            return distance
+            
+        except LookupException:
+            # If TF not ready yet, ignore movement
+            return 0.0
+        except Exception as e:
+            self.get_logger().warn(f'TF lookup error: {e}')
             return 0.0
 
     # ═════════════════ CLEAN LOGGING ═════════════════
